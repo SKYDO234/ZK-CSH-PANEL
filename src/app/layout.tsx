@@ -3,12 +3,14 @@ import './globals.css';
 import { getSettings, toPublicBranding } from '@/lib/settings';
 import { BrandingStyle, ThemeScript } from '@/components/branding/branding-style';
 import { ToastProvider } from '@/components/ui/toast';
+import { appUrl } from '@/lib/env';
 
 export async function generateMetadata(): Promise<Metadata> {
   try {
     const settings = await getSettings();
     const branding = toPublicBranding(settings);
     return {
+      metadataBase: new URL(appUrl()),
       title: {
         default: `${branding.platformName} — Secure cloud storage`,
         template: `%s · ${branding.platformName}`,
