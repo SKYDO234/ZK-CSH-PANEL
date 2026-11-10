@@ -1,4 +1,12 @@
+<div align="center">
+
+<img src="assets/zk-studio.png" alt="ZK Studio" width="280" />
+
 # Vaultly — Self-Hosted Cloud Storage Platform
+
+**Made by ZK STUDIO**
+
+</div>
 
 A complete, production-ready file hosting platform you run yourself: users get a
 private drive with quotas, your visitors get fast public media URLs
@@ -457,3 +465,13 @@ call `POST /api/admin/worker`.
 
 Built with Next.js 15 (App Router), React 19, TypeScript, Drizzle ORM, Postgres,
 Tailwind CSS, sharp and the AWS SDK for S3.
+
+---
+
+<div align="center">
+
+<img src="assets/zk-studio.png" alt="ZK Studio logo" width="140" />
+
+### Made by ZK STUDIO
+
+</div>
