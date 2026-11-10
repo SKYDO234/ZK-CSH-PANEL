@@ -1,0 +1,207 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Brand colours are injected at render time from the database (see
+ * BrandingStyle component). These are the defaults used before that runs.
+ */
+:root {
+  --brand: 79 70 229;
+  --brand-50: 238 242 255;
+  --brand-100: 224 231 255;
+  --brand-200: 199 210 254;
+  --brand-300: 165 180 252;
+  --brand-400: 129 140 248;
+  --brand-600: 67 56 202;
+  --brand-700: 55 48 163;
+  --brand-800: 49 46 129;
+  --brand-900: 30 27 75;
+  --secondary: 14 165 233;
+  --secondary-600: 2 132 199;
+  --accent: 139 92 246;
+
+  --canvas: 248 250 252;
+  --surface: 255 255 255;
+  --ink: 15 23 42;
+  --muted: 100 116 139;
+  --line: 226 232 240;
+
+  --sidebar-bg: 17 24 39;
+  --sidebar-ink: 226 232 240;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color-scheme: light;
+}
+
+.dark {
+  --canvas: 9 12 20;
+  --surface: 17 22 33;
+  --ink: 238 242 248;
+  --muted: 148 163 184;
+  --line: 39 48 66;
+
+  --sidebar-bg: 13 17 26;
+  --sidebar-ink: 226 232 240;
+
+  color-scheme: dark;
+}
+
+.sidebar-light {
+  --sidebar-bg: 255 255 255;
+  --sidebar-ink: 15 23 42;
+}
+
+* {
+  border-color: rgb(var(--line));
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: rgb(var(--canvas));
+  color: rgb(var(--ink));
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgb(var(--brand) / 0.2);
+}
+
+/* Focus ring that follows the brand colour */
+:focus-visible {
+  outline: 2px solid rgb(var(--brand));
+  outline-offset: 2px;
+}
+
+/* Slim, unobtrusive scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--muted) / 0.35) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(var(--muted) / 0.3);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--muted) / 0.5);
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line bg-surface shadow-card;
+  }
+
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-brand text-white shadow-sm hover:brightness-110 active:brightness-95;
+  }
+  .btn-secondary {
+    @apply btn border border-line bg-surface text-ink hover:bg-canvas;
+  }
+  .btn-ghost {
+    @apply btn text-muted hover:bg-canvas hover:text-ink;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700;
+  }
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+  .btn-icon {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-muted transition hover:bg-canvas hover:text-ink;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm text-ink placeholder:text-muted/70
+      transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/10 disabled:opacity-60;
+  }
+  .label {
+    @apply mb-1.5 block text-[13px] font-medium text-ink;
+  }
+  .hint {
+    @apply mt-1.5 text-xs text-muted;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold;
+  }
+  .badge-neutral {
+    @apply badge bg-canvas text-muted ring-1 ring-inset ring-line;
+  }
+  .badge-brand {
+    @apply badge bg-brand/10 text-brand ring-1 ring-inset ring-brand/20;
+  }
+  .badge-green {
+    @apply badge bg-emerald-500/10 text-emerald-600 ring-1 ring-inset ring-emerald-500/20 dark:text-emerald-400;
+  }
+  .badge-amber {
+    @apply badge bg-amber-500/10 text-amber-600 ring-1 ring-inset ring-amber-500/20 dark:text-amber-400;
+  }
+  .badge-red {
+    @apply badge bg-red-500/10 text-red-600 ring-1 ring-inset ring-red-500/20 dark:text-red-400;
+  }
+
+  .skeleton {
+    @apply relative overflow-hidden rounded-lg bg-muted/15;
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0 -translate-x-full;
+    background: linear-gradient(90deg, transparent, rgb(var(--surface) / 0.6), transparent);
+    animation: shimmer 1.6s infinite;
+  }
+
+  .table-base {
+    @apply w-full border-collapse text-sm;
+  }
+  .table-base thead th {
+    @apply border-b border-line px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted;
+  }
+  .table-base tbody td {
+    @apply border-b border-line/70 px-4 py-3 align-middle text-ink;
+  }
+  .table-base tbody tr:last-child td {
+    @apply border-b-0;
+  }
+  .table-base tbody tr {
+    @apply transition hover:bg-canvas/70;
+  }
+
+  .nav-link {
+    @apply flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition;
+  }
+
+  .prose-tight p {
+    @apply mb-2 last:mb-0;
+  }
+}
+
+/* Utility for hiding scrollbars on horizontal chip rows */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

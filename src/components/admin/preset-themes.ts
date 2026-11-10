@@ -1,0 +1,51 @@
+/** Curated palettes an admin can apply with one click, then fine-tune. */
+export const PRESET_THEMES = [
+  {
+    id: 'indigo',
+    name: 'Indigo Cloud',
+    primaryColor: '#4f46e5',
+    secondaryColor: '#0ea5e9',
+    accentColor: '#8b5cf6',
+    backgroundTint: '#f8fafc',
+  },
+  {
+    id: 'emerald',
+    name: 'Emerald Vault',
+    primaryColor: '#059669',
+    secondaryColor: '#0891b2',
+    accentColor: '#10b981',
+    backgroundTint: '#f7fdfa',
+  },
+  {
+    id: 'rose',
+    name: 'Rose Studio',
+    primaryColor: '#e11d48',
+    secondaryColor: '#f97316',
+    accentColor: '#fb7185',
+    backgroundTint: '#fdf8f9',
+  },
+  {
+    id: 'amber',
+    name: 'Amber Archive',
+    primaryColor: '#d97706',
+    secondaryColor: '#b45309',
+    accentColor: '#f59e0b',
+    backgroundTint: '#fdfaf5',
+  },
+  {
+    id: 'slate',
+    name: 'Slate Minimal',
+    primaryColor: '#334155',
+    secondaryColor: '#0f766e',
+    accentColor: '#64748b',
+    backgroundTint: '#f8fafc',
+  },
+  {
+    id: 'violet',
+    name: 'Violet Night',
+    primaryColor: '#7c3aed',
+    secondaryColor: '#db2777',
+    accentColor: '#a855f7',
+    backgroundTint: '#f9f7fe',
+  },
+] as const;
