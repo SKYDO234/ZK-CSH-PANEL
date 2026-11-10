@@ -13,3 +13,6 @@ drizzle/meta/_journal.json.bak
 *.log
 .DS_Store
 coverage
+
+# TypeScript incremental build info
+*.tsbuildinfo
