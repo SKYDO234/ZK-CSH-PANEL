@@ -87,7 +87,48 @@ Visitors ──► /share/:token      branded share page (preview, password, exp
 
 ---
 
-## Quick start (5 minutes)
+## One-command install
+
+On a fresh Linux server (Debian/Ubuntu, RHEL/Fedora/Rocky, Arch, Alpine) or a Mac,
+`install.sh` sets up everything and hosts the panel:
+
+```bash
+git clone https://github.com/SKYDO234/ZK-CSH-PANEL.git
+cd ZK-CSH-PANEL
+sudo bash install.sh
+```
+
+It installs Node.js 22 and PostgreSQL when they're missing, creates a dedicated
+`zkstudio` service account, writes `.env` with a freshly generated `AUTH_SECRET`,
+applies migrations, seeds roles/settings/the first admin, builds the app and
+installs systemd services for the panel and the background worker. When it
+finishes it prints the URL and a generated admin password (shown once).
+
+```bash
+sudo bash install.sh --port 8080                    # custom port
+sudo bash install.sh --domain files.example.com     # sets APP_URL to https://…
+sudo bash install.sh --dir /srv/panel               # custom install location
+sudo bash install.sh --no-systemd                   # run in the foreground (Docker)
+sudo bash install.sh --uninstall                    # stop services and remove the app
+```
+
+Useful flags: `--admin-email`, `--admin-password`, `--no-db` (use an external
+`DATABASE_URL`), `--no-worker`. Run `sudo bash install.sh --help` for the full list.
+
+**Notes**
+- Re-running the installer is safe: it updates the code, re-applies migrations and
+  leaves your `.env`, database and admin account untouched.
+- If PostgreSQL can't be installed (no root, offline package repos, container), the
+  installer automatically falls back to the bundled PostgreSQL that ships with this
+  repo — no separate database server required.
+- Export `S3_BUCKET`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` before running to
+  use S3/R2/B2 instead of local disk.
+- TCP ports only go up to **65535**, so a request for `77777` is clamped to `65535`
+  with a warning. Pick a normal port with `--port`.
+
+---
+
+## Manual quick start (5 minutes)
 
 **Requirements:** Node.js 20+, and either a Postgres 14+ server or nothing at all
 for local development (an embedded Postgres is bundled for dev).
@@ -233,6 +274,7 @@ npm run db:studio             # browse the database
 | `npm run db:local` | Embedded Postgres for offline development. |
 | `npm run worker` | Background jobs (thumbnails, purge, session cleanup). |
 | `./scripts/dev.sh` | DB + migrations + dev server in one command. |
+| `sudo bash install.sh` | One-command production install (see above). |
 
 ---
 
