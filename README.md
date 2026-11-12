@@ -1,8 +1,10 @@
 <div align="center">
 
-<img src="assets/zk-studio.png" alt="ZK Studio" width="280" />
+<img src="assets/panel-logo.png" alt="ZK-CSH-PANEL — cloud storage panel" width="320" />
 
-# Vaultly — Self-Hosted Cloud Storage Platform
+# ZK-CSH-PANEL — Self-Hosted Cloud Storage Platform
+
+<img src="assets/zk-studio.png" alt="ZK Studio" width="96" />
 
 **Made by ZK STUDIO**
 

@@ -74,7 +74,7 @@ export function Sidebar({
     <div className="flex h-full flex-col">
       <div className="flex h-16 shrink-0 items-center justify-between px-5">
         <Link href={variant === 'admin' ? '/admin' : '/dashboard'} onClick={() => setMobileOpen(false)}>
-          <Logo name={branding.platformName} logoUrl={branding.logoUrl} invert={branding.sidebarStyle === 'dark'} />
+          <Logo name={branding.platformName} logoUrl={branding.logoUrl} markUrl={branding.markUrl} invert={branding.sidebarStyle === 'dark'} />
         </Link>
         <button
           type="button"
@@ -166,6 +166,20 @@ export function Sidebar({
       <div className="shrink-0 border-t border-white/10 px-4 py-3">
         <p className="truncate text-xs font-medium text-[rgb(var(--sidebar-ink))]/80">{user.name}</p>
         <p className="truncate text-[11px] text-[rgb(var(--sidebar-ink))]/50">{user.email}</p>
+        {branding.showPoweredBy && branding.studioName ? (
+          <span className="mt-2 flex items-center gap-1.5 text-[10px] text-[rgb(var(--sidebar-ink))]/45">
+            <span>Made by</span>
+            {branding.studioLogoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={branding.studioLogoUrl}
+                alt=""
+                className="h-4 w-4 shrink-0 rounded-full object-contain opacity-80"
+              />
+            ) : null}
+            <span className="font-semibold uppercase tracking-[0.12em]">{branding.studioName}</span>
+          </span>
+        ) : null}
       </div>
     </div>
   );

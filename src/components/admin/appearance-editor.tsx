@@ -35,6 +35,8 @@ export function AppearanceEditor({ initial }: { initial: AppearanceSettings }) {
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState<string | null>(null);
   const logoInput = useRef<HTMLInputElement>(null);
+  const markInput = useRef<HTMLInputElement>(null);
+  const studioInput = useRef<HTMLInputElement>(null);
   const faviconInput = useRef<HTMLInputElement>(null);
   const loginBgInput = useRef<HTMLInputElement>(null);
 
@@ -49,7 +51,7 @@ export function AppearanceEditor({ initial }: { initial: AppearanceSettings }) {
     [draft.primaryColor],
   );
 
-  const uploadImage = async (file: File, kind: 'logo' | 'favicon' | 'login') => {
+  const uploadImage = async (file: File, kind: 'logo' | 'mark' | 'studio' | 'favicon' | 'login') => {
     setUploading(kind);
     const body = new FormData();
     body.append('file', file);
@@ -64,6 +66,8 @@ export function AppearanceEditor({ initial }: { initial: AppearanceSettings }) {
     if (res.ok) {
       const url = json.data.url as string;
       if (kind === 'logo') update('logoUrl', url);
+      else if (kind === 'mark') update('markUrl', url);
+      else if (kind === 'studio') update('studioLogoUrl', url);
       else if (kind === 'favicon') update('faviconUrl', url);
       else update('loginBackgroundUrl', url);
       success('Image uploaded', 'Save to apply it across the platform.');
@@ -133,7 +137,7 @@ export function AppearanceEditor({ initial }: { initial: AppearanceSettings }) {
                     onChange={(event) => update('platformName', event.target.value)}
                     maxLength={60}
                   />
-                  <p className="hint">Appears in the sidebar, emails and page titles.</p>
+                  <p className="hint">The panel itself — appears in the sidebar, emails and titles.</p>
                 </div>
                 <div>
                   <label htmlFor="ap-tagline" className="label">
@@ -147,12 +151,28 @@ export function AppearanceEditor({ initial }: { initial: AppearanceSettings }) {
                     maxLength={160}
                   />
                 </div>
+                <div>
+                  <label htmlFor="ap-studio" className="label">
+                    Studio name
+                  </label>
+                  <input
+                    id="ap-studio"
+                    className="input"
+                    value={draft.studioName}
+                    onChange={(event) => update('studioName', event.target.value)}
+                    maxLength={60}
+                    placeholder="ZK STUDIO"
+                  />
+                  <p className="hint">Shown as “Made by …”. Leave empty to hide the credit.</p>
+                </div>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-3">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 {(
                   [
-                    { key: 'logo' as const, label: 'Logo', field: 'logoUrl' as const, ref: logoInput, value: draft.logoUrl },
+                    { key: 'logo' as const, label: 'Panel logo', field: 'logoUrl' as const, ref: logoInput, value: draft.logoUrl },
+                    { key: 'mark' as const, label: 'Panel mark', field: 'markUrl' as const, ref: markInput, value: draft.markUrl },
+                    { key: 'studio' as const, label: 'Studio logo', field: 'studioLogoUrl' as const, ref: studioInput, value: draft.studioLogoUrl },
                     { key: 'favicon' as const, label: 'Favicon', field: 'faviconUrl' as const, ref: faviconInput, value: draft.faviconUrl },
                     {
                       key: 'login' as const,
@@ -426,7 +446,7 @@ export function AppearanceEditor({ initial }: { initial: AppearanceSettings }) {
                   onChange={(event) => update('showPoweredBy', event.target.checked)}
                   className="h-4 w-4 rounded border-line text-brand"
                 />
-                Show a subtle platform credit in shared pages
+                Show the “Made by ZK STUDIO” credit on sign-in, share pages and the sidebar
               </label>
             </div>
           ) : null}

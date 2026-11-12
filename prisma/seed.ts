@@ -56,6 +56,31 @@ export async function runSeed() {
   }
 
   console.log('[seed] settings');
+  // Existing installs keep their stored appearance document. Fill in branding
+  // keys added later (panel mark, studio credit) without touching anything the
+  // admin changed, so an upgrade never reverts a custom logo.
+  if (!demo) {
+    const [existingAppearance] = await db
+      .select({ value: settingsTable.value })
+      .from(settingsTable)
+      .where(eq(settingsTable.key, 'appearance'))
+      .limit(1);
+    if (existingAppearance?.value && typeof existingAppearance.value === 'object') {
+      const current = existingAppearance.value as Record<string, unknown>;
+      const missing: Record<string, unknown> = {};
+      for (const [field, fallback] of Object.entries(DEFAULT_SETTINGS.appearance)) {
+        if (!(field in current)) missing[field] = fallback;
+      }
+      if (Object.keys(missing).length > 0) {
+        await db
+          .update(settingsTable)
+          .set({ value: { ...current, ...missing }, updatedAt: new Date() })
+          .where(eq(settingsTable.key, 'appearance'));
+        console.log(`[seed] added appearance defaults: ${Object.keys(missing).join(', ')}`);
+      }
+    }
+  }
+
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     const existing = await db
       .select({ key: settingsTable.key })
