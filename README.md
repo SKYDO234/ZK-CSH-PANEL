@@ -119,6 +119,7 @@ sudo bash install.sh --port 8080                    # custom port
 sudo bash install.sh --domain files.example.com     # sets APP_URL to https://…
 sudo bash install.sh --dir /srv/panel               # custom install location
 sudo bash install.sh --no-systemd                   # run in the foreground (Docker)
+bash install.sh --rootless                          # no root: installs into ~/zk-studio/vaultly
 sudo bash install.sh --uninstall                    # stop services and remove the app
 ```
 
@@ -130,13 +131,23 @@ Useful flags: `--admin-email`, `--admin-password`, `--no-db` (use an external
   leaves your `.env`, database and admin account untouched.
 - If PostgreSQL can't be installed (no root, offline package repos, container), the
   installer automatically falls back to the bundled PostgreSQL that ships with this
-  repo — no separate database server required.
+  repo — no separate database server required. If port 5432 is already taken, the
+  bundled server picks the next free port instead of failing, and the app's
+  `DATABASE_URL` is written to match.
 - Export `S3_BUCKET`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` before running to
   use S3/R2/B2 instead of local disk.
 - TCP ports only go up to **65535**, so `77777` is not a valid port; it is replaced
   with `8080` and a warning is printed. Pass `--port` to choose your own.
-- In GitHub Codespaces run `sudo bash install.sh --port 3000`, then open the **Ports**
-  tab and forward port 3000 — Codespaces only auto-forwards common ports.
+- The default port is **8080**. In GitHub Codespaces use `sudo bash install.sh --port 3000`
+  and open the **Ports** tab to forward port 3000 — Codespaces only auto-forwards
+  common ports.
+- Run it with `sudo`. If your user has passwordless sudo (the Codespaces default)
+  the script re-executes itself as root automatically, so you never get a password
+  prompt in the middle of the install.
+- **No usable root at all?** `setup_rootless()` takes over: when `sudo` is missing or
+  cannot authenticate, or when you pass `--rootless`, everything is installed into
+  `~/zk-studio/vaultly` as your own user, the port defaults to 3000, and the panel
+  runs in the foreground. Nothing prompts for a password.
 
 ---
 

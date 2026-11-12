@@ -17,6 +17,8 @@
 #     --no-worker           Skip the background worker service
 #     --no-systemd          Run in the foreground instead of installing services
 #                           (automatic inside containers / on macOS)
+#     --rootless            Install into $HOME as the current user, no root needed
+#                           (also selected automatically when sudo is unusable)
 #     --uninstall           Stop services and remove the installed app
 #     --help                Show this help
 #
@@ -28,9 +30,12 @@ set -Eeuo pipefail
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
+ORIG_ARGS=("$@")
+
 APP_NAME="zk-studio-vaultly"
 APP_USER="zkstudio"
-PORT="${PORT:-77777}"
+PORT="${PORT:-8080}"
+PORT_EXPLICIT=0
 DOMAIN=""
 ADMIN_EMAIL=""
 ADMIN_PASSWORD=""
@@ -39,6 +44,7 @@ USE_LOCAL_DB=1
 INSTALL_WORKER=1
 USE_SYSTEMD=1
 UNINSTALL=0
+FORCE_ROOTLESS=0
 
 # Cloudflare R2 / S3 (export these before running to enable object storage)
 S3_BUCKET="${S3_BUCKET:-}"
@@ -63,8 +69,10 @@ validate_port() {
   if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
     local requested="$PORT"
     PORT=8080
-    warn "Port ${requested} is not a valid TCP port (1–65535); using ${PORT} instead."
-    warn "Re-run with --port <n> to pick your own (e.g. --port 3000)."
+    if [ "$PORT_EXPLICIT" -eq 1 ]; then
+      warn "Port ${requested} is not a valid TCP port (1–65535); using ${PORT} instead."
+      warn "Re-run with --port <n> to pick your own (e.g. --port 3000)."
+    fi
   fi
 }
 
@@ -93,7 +101,7 @@ usage() { sed -n '3,25p' "${BASH_SOURCE[0]}" | sed 's/^#//; s/^ //'; exit 0; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --port)           PORT="${2:?--port needs a value}"; shift 2 ;;
+    --port)           PORT="${2:?--port needs a value}"; PORT_EXPLICIT=1; shift 2 ;;
     --domain)         DOMAIN="${2:?--domain needs a value}"; shift 2 ;;
     --admin-email)    ADMIN_EMAIL="${2:?}"; shift 2 ;;
     --admin-password) ADMIN_PASSWORD="${2:?}"; shift 2 ;;
@@ -101,6 +109,7 @@ while [ $# -gt 0 ]; do
     --no-db)          USE_LOCAL_DB=0; shift ;;
     --no-worker)      INSTALL_WORKER=0; shift ;;
     --no-systemd)     USE_SYSTEMD=0; shift ;;
+    --rootless)       FORCE_ROOTLESS=1; shift ;;
     --uninstall)      UNINSTALL=1; shift ;;
     --help|-h)        usage ;;
     *)                die "Unknown option: $1  (try --help)" ;;
@@ -110,7 +119,61 @@ done
 # ─────────────────────────────────────────────────────────────────────────────
 # Platform detection
 # ─────────────────────────────────────────────────────────────────────────────
-DISTRO=""; PKG=""; IS_ROOT=0; SUDO=""; IN_CONTAINER=0; INIT=""
+DISTRO=""; PKG=""; IS_ROOT=0; SUDO=""; IN_CONTAINER=0; INIT=""; LOCAL_PG_PORT=""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Privilege handling
+# ─────────────────────────────────────────────────────────────────────────────
+elevate() {
+  [ "${FORCE_ROOTLESS:-0}" = "1" ] && { setup_rootless; return 0; }
+  [ "$(id -u)" -eq 0 ] && return 0
+
+  if [ "${ZK_INSTALL_ELEVATED:-0}" = "1" ]; then
+    # We already re-executed as root but are somehow not — bail clearly.
+    die "Root privileges are required."
+  fi
+
+  local self; self="$(readlink -f "${BASH_SOURCE[0]}")"
+
+  # Codespaces, dev containers and CI usually have passwordless sudo: re-exec
+  # straight away so the whole run is root and no mid-install password prompt
+  # can appear (which is what happens with a bare "sudo" inside a function).
+  if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+    printf '  · elevating with sudo (passwordless)\n'
+    exec env ZK_INSTALL_ELEVATED=1 sudo -n -E bash "$self" "${ORIG_ARGS[@]}"
+  fi
+
+  # Sudo exists but needs a password. In Codespaces and similar containers the
+  # login user often has *no* password, so prompting can never succeed. Ask for
+  # one attempt, then fall back to a rootless install in the current directory.
+  if command -v sudo >/dev/null 2>&1 && [ -t 0 ]; then
+    if sudo -v 2>/dev/null; then
+      printf '  · sudo accepted — continuing as root\n'
+      exec env ZK_INSTALL_ELEVATED=1 sudo -E bash "$self" "${ORIG_ARGS[@]}"
+    fi
+    warn "sudo is not usable here (no password for this account)."
+  fi
+
+  setup_rootless
+}
+
+# Rootless install: everything lives in a user-owned directory and the panel runs
+# in the foreground. Used in containers where sudo has no usable password.
+setup_rootless() {
+  export ROOTLESS=1
+  USE_SYSTEMD=0
+  if [ "${ZK_ROOTLESS_ANNOUNCED:-0}" != "1" ]; then
+    export ZK_ROOTLESS_ANNOUNCED=1
+    warn "Installing without root — files go to a user-owned directory."
+    warn "No systemd services; the panel runs in the foreground."
+  fi
+  case "$INSTALL_DIR" in
+    /opt/*|/usr/*|/srv/*) INSTALL_DIR="$HOME/zk-studio/vaultly" ;;
+  esac
+  [ "$PORT_EXPLICIT" -eq 1 ] || PORT=3000
+  APP_USER="$(id -un)"
+  return 0
+}
 
 detect_platform() {
   step "Detecting platform"
@@ -146,6 +209,14 @@ detect_platform() {
     SUDO=""
   elif command -v sudo >/dev/null 2>&1; then
     SUDO="sudo"
+  else
+    die "This installer needs root. Install sudo, or run it as root (su -)."
+  fi
+
+  # Rootless mode never has root available, so no command may be prefixed.
+  if [ "${ROOTLESS:-0}" = "1" ]; then
+    SUDO=""
+    USE_SYSTEMD=0
   fi
 
   # Containers: no systemd, no user management.
@@ -191,8 +262,25 @@ pkg_install() {
 
 has() { command -v "$1" >/dev/null 2>&1; }
 
+# Ports are the most common install-time collision (a coding sandbox or another
+# Postgres already owns 5432). Pick a free one instead of failing later.
+free_port() {
+  local p="${1:-5432}" limit=$(( ${1:-5432} + 50 ))
+  while [ "$p" -lt "$limit" ]; do
+    port_open "$p" || { printf '%s' "$p"; return 0; }
+    p=$((p + 1))
+  done
+  return 1
+}
+
 port_in_use() {
-  if has ss; then ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$PORT\$"
+  port_open "${1:-$PORT}"
+}
+
+# True when anything is already listening on the given TCP port.
+port_open() {
+  local p="$1"
+  if has ss; then ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}\$"
   elif has lsof; then lsof -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1
   else return 1
   fi
@@ -214,6 +302,11 @@ install_node() {
   if node_ok; then
     ok "Node $(node -v) already installed"
     return
+  fi
+
+  if [ "${ROOTLESS:-0}" = "1" ]; then
+    die "Node.js $NODE_MIN_MAJOR+ is required and cannot be installed without root.
+     Install it from https://nodejs.org (or use nvm), then re-run this script."
   fi
 
   info "Installing Node.js 22 LTS"
@@ -263,6 +356,13 @@ install_postgres() {
     return
   fi
 
+  # The bundled database binds 127.0.0.1, so a busy 5432 (very common in
+  # containers and developer machines) must not make the install fail.
+  if [ -z "${LOCAL_PG_PORT:-}" ]; then
+    LOCAL_PG_PORT="$(free_port 5432 || echo 5432)"
+    [ "$LOCAL_PG_PORT" = "5432" ] || info "Port 5432 is busy — bundled PostgreSQL will use $LOCAL_PG_PORT"
+  fi
+
   # Already-running server with our role? Use it.
   if pg_ready "$DB_USER"; then
     DB_MODE="system"
@@ -279,12 +379,21 @@ install_postgres() {
   fi
 
   # Try installing a system server. Requires root + reachable package repos.
+  # IMPORTANT: starting a freshly installed server can fail (containers have no
+  # systemd, clusters need initdb). Any failure here must fall through to the
+  # bundled database, never abort the run — hence the guarded call + check.
   if try_install_system_postgres; then
-    DB_MODE="system"
-    start_system_postgres
-    provision_role
-    ok "PostgreSQL installed (db: $DB_NAME, role: $DB_USER)"
-    return
+    if start_system_postgres && pg_ready "postgres" ""; then
+      DB_MODE="system"
+      provision_role || true
+      if pg_ready "$DB_USER" "$DB_PASSWORD" || pg_ready "$DB_USER"; then
+        ok "PostgreSQL installed (db: $DB_NAME, role: $DB_USER)"
+        return
+      fi
+      warn "A system PostgreSQL was installed but is not usable yet."
+    else
+      warn "A system PostgreSQL was installed but could not be started."
+    fi
   fi
 
   # Fall back to the bundled PostgreSQL — no root, no package manager needed.
@@ -297,6 +406,7 @@ install_postgres() {
 }
 
 try_install_system_postgres() {
+  [ "${ROOTLESS:-0}" = "1" ] && return 1
   [ "$OS" = linux ] || { [ "$OS" = macos ] && has brew && brew install postgresql@16 >/dev/null 2>&1; return $?; }
   [ "$PKG" = "" ] && return 1
   # Only attempt when we can elevate; a failed repo fetch is a soft failure.
@@ -314,14 +424,33 @@ try_install_system_postgres() {
 }
 
 start_system_postgres() {
-  if [ -n "$INIT" ]; then
+  # Returns 0 only when the server answers. Never inherits a failing exit status
+  # (the caller falls back to the bundled database).
+  if [ -n "$INIT" ] && has systemctl; then
     for svc in postgresql postgresql@16 postgresql@15 postgresql@14; do
       $SUDO systemctl enable --now "$svc" >/dev/null 2>&1 && break
     done
-  elif [ "$OS" = macos ] && has brew; then
+  elif [ "$OS" = "macos" ] && has brew; then
     brew services start postgresql@16 >/dev/null 2>&1 || true
+  else
+    # No systemd (containers, Codespaces): start the cluster directly.
+    local pgctl=""
+    for candidate in "$(command -v pg_ctlcluster 2>/dev/null)" /usr/lib/postgresql/*/bin/pg_ctl; do
+      [ -n "$candidate" ] && [ -x "$candidate" ] && { pgctl="$candidate"; break; }
+    done
+    if has pg_ctlcluster; then
+      $SUDO pg_ctlcluster "$(pg_lsclusters -h 2>/dev/null | awk 'NR==1{print $1}' || echo 16)" main start >/dev/null 2>&1 || true
+    elif [ -n "$pgctl" ]; then
+      local datadir
+      datadir="$(pg_lsclusters -h 2>/dev/null | awk 'NR==1{print $6}')"
+      [ -n "$datadir" ] && run_as postgres "$pgctl" -D "$datadir" -l /tmp/pg.log start >/dev/null 2>&1 || true
+    elif has service; then
+      $SUDO service postgresql start >/dev/null 2>&1 || true
+    fi
   fi
-  for _ in $(seq 1 30); do
+
+  local i
+  for i in $(seq 1 20); do
     pg_ready "postgres" "" && return 0
     sleep 1
   done
@@ -368,6 +497,15 @@ ensure_openssl() {
 # ─────────────────────────────────────────────────────────────────────────────
 prepare_user_and_dir() {
   step "Preparing $INSTALL_DIR"
+
+  if [ "${ROOTLESS:-0}" = "1" ]; then
+    mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/storage/uploads" "$INSTALL_DIR/.data"
+    copy_payload
+    mkdir -p "$INSTALL_DIR/storage/uploads" "$INSTALL_DIR/.data/postgres"
+    ok "Application files in place (rootless, user: $APP_USER)"
+    return
+  fi
+
   need_root_hint
 
   if [ "$OS" = linux ] && ! id "$APP_USER" >/dev/null 2>&1; then
@@ -393,9 +531,12 @@ copy_payload() {
     info "Installing in place"
     return
   fi
+  local RS=""
+  [ "${ROOTLESS:-0}" = "1" ] || RS="$SUDO"
+
   # Skip build artifacts, the local database and node_modules.
   if has rsync; then
-    $SUDO rsync -a --delete \
+    $RS rsync -a --delete \
       --exclude /node_modules --exclude /.next --exclude /.data \
       --exclude /storage --exclude /.git --exclude /.env \
       "$IT_DIR"/ "$INSTALL_DIR"/
@@ -403,7 +544,7 @@ copy_payload() {
     ( cd "$IT_DIR" && tar -cf - \
         --exclude=./node_modules --exclude=./.next --exclude=./.data \
         --exclude=./storage --exclude=./.git --exclude=./.env . ) \
-      | $SUDO tar -xf - -C "$INSTALL_DIR"
+      | $RS tar -xf - -C "$INSTALL_DIR"
   fi
 }
 
@@ -472,7 +613,9 @@ build_app() {
   local log="${INSTALL_DIR}/.data/build.log"
   $SUDO mkdir -p "${INSTALL_DIR}/.data"
   $SUDO rm -f "$log" 2>/dev/null || true
-  [ "$OS" = linux ] && can_switch_user && $SUDO chown -R "$APP_USER":"$APP_USER" "${INSTALL_DIR}/.data" 2>/dev/null || true
+  if [ "${ROOTLESS:-0}" != "1" ] && [ "$OS" = linux ] && can_switch_user; then
+    $SUDO chown -R "$APP_USER":"$APP_USER" "${INSTALL_DIR}/.data" 2>/dev/null || true
+  fi
 
   local status=0
   as_user env bash -c "cd '$INSTALL_DIR' && npm run build > '$log' 2>&1" || status=$?
@@ -534,7 +677,7 @@ write_env() {
 
   local database_url
   if [ "$DB_MODE" = "embedded" ]; then
-    database_url="postgresql://postgres:postgres@127.0.0.1:5432/${DB_NAME}?schema=public"
+    database_url="postgresql://postgres:postgres@127.0.0.1:${LOCAL_PG_PORT:-5432}/${DB_NAME}?schema=public"
   else
     database_url="postgresql://${DB_USER}:${DB_PASSWORD}@127.0.0.1:5432/${DB_NAME}?schema=public"
   fi
@@ -560,7 +703,7 @@ ENV
 
   if [ "$DB_MODE" = "embedded" ]; then
     $SUDO tee -a "$env_file" >/dev/null <<ENV
-LOCAL_PG_PORT="5432"
+LOCAL_PG_PORT="${LOCAL_PG_PORT:-5432}"
 LOCAL_PG_DATABASE="${DB_NAME}"
 ENV
   fi
@@ -576,8 +719,8 @@ S3_FORCE_PATH_STYLE="${S3_FORCE_PATH_STYLE}"
 ENV
   fi
 
-  if [ "$OS" = linux ] && { [ "$IS_ROOT" -eq 1 ] || [ -n "$SUDO" ]; } \
-     && id "$APP_USER" >/dev/null 2>&1; then
+  if [ "${ROOTLESS:-0}" != "1" ] && [ "$OS" = linux ] \
+     && { [ "$IS_ROOT" -eq 1 ] || [ -n "$SUDO" ]; } && id "$APP_USER" >/dev/null 2>&1; then
     $SUDO chown "$APP_USER":"$APP_USER" "$env_file" 2>/dev/null || true
     $SUDO chmod 640 "$env_file"
   else
@@ -602,8 +745,10 @@ Change this password after signing in.
 Delete this file once you have saved the password elsewhere.
 CREDS
     $SUDO chmod 600 "${INSTALL_DIR}/CREDENTIALS.txt"
-    [ "$OS" = linux ] && { [ "$IS_ROOT" -eq 1 ] || [ -n "$SUDO" ]; } && \
+    if [ "${ROOTLESS:-0}" != "1" ] && [ "$OS" = linux ] \
+       && { [ "$IS_ROOT" -eq 1 ] || [ -n "$SUDO" ]; }; then
       $SUDO chown "$APP_USER":"$APP_USER" "${INSTALL_DIR}/CREDENTIALS.txt" 2>/dev/null || true
+    fi
   fi
 }
 
@@ -684,7 +829,7 @@ User=${APP_USER}
 Group=${APP_USER}
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${INSTALL_DIR}/.env
-Environment=LOCAL_PG_PORT=5432
+Environment=LOCAL_PG_PORT=${LOCAL_PG_PORT:-5432}
 ExecStart=${node_bin} ${INSTALL_DIR}/node_modules/.bin/tsx ${INSTALL_DIR}/scripts/local-db.ts
 Restart=always
 RestartSec=5
@@ -787,6 +932,13 @@ run_foreground() {
     done
     db_reachable || { warn "Database did not start; see $INSTALL_DIR/.data/postgres.log"; tail -10 "$INSTALL_DIR/.data/postgres.log" >&2 || true; }
     info "Database ready"
+  fi
+
+  if port_in_use; then
+    warn "Port ${PORT} is already in use by another process."
+    warn "Stop it, or re-run with a different port: --port <n>"
+    stop_embedded_db
+    die "Cannot start the panel on port ${PORT}."
   fi
 
   info "Press Ctrl-C to stop."
@@ -903,6 +1055,7 @@ banner() {
 }
 
 main() {
+  elevate
   validate_port
   banner
   detect_platform

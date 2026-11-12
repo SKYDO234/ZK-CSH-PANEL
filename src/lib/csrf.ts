@@ -1,4 +1,5 @@
 import { cookies } from 'next/headers';
+import { isHttpsRequest } from './request';
 import { randomToken, signValue, verifySignedValue } from './crypto';
 
 export const CSRF_HEADER = 'x-csrf-token';
@@ -16,7 +17,7 @@ export async function ensureCsrfToken(): Promise<string> {
     store.set('vaultly_csrf', token, {
       httpOnly: false, // the client JS must echo it back in a header
       sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      secure: await isHttpsRequest(),
       path: '/',
       maxAge: 60 * 60 * 24 * 7,
     });

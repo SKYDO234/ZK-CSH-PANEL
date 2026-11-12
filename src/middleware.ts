@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { httpsFromHeaders } from '@/lib/request';
 
 const SESSION_COOKIE = 'vaultly_session';
 const CSRF_COOKIE = 'vaultly_csrf';
@@ -42,7 +43,7 @@ export function middleware(req: NextRequest) {
     res.cookies.set(CSRF_COOKIE, token, {
       httpOnly: false, // readable by the app so it can send the header
       sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      secure: httpsFromHeaders(req.headers),
       path: '/',
       maxAge: 60 * 60 * 12,
     });
