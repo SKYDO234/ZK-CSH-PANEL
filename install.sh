@@ -343,9 +343,30 @@ DB_NAME="vaultly"
 DB_USER="vaultly"
 DB_PASSWORD=""
 
+PG_PORT=5432
+
+# Every psql call runs with -w (never prompt) and stdin from /dev/null. Without
+# this, a container cluster using scram-sha-256 makes psql print
+# "Password for user postgres:" and wait for input forever — the install then
+# looks frozen on "Checking PostgreSQL".
 pg_ready() {
   # True when we can run SQL against the server.
-  PGPASSWORD="${2:-$DB_PASSWORD}" psql -h 127.0.0.1 -p 5432 -U "${1:-$DB_USER}" -d postgres -tAc 'select 1' >/dev/null 2>&1
+  local user="${1:-$DB_USER}" pass="${2-$DB_PASSWORD}"
+  if [ -n "$pass" ]; then
+    PGPASSWORD="$pass" psql -w -X -h 127.0.0.1 -p "$PG_PORT" -U "$user" -d postgres -tAc 'select 1' </dev/null >/dev/null 2>&1
+  else
+    env -u PGPASSWORD psql -w -X -h 127.0.0.1 -p "$PG_PORT" -U "$user" -d postgres -tAc 'select 1' </dev/null >/dev/null 2>&1
+  fi
+}
+
+# True when the postgres superuser can run SQL. Prefers the local socket as the
+# postgres OS user (peer auth — no password involved), then falls back to TCP.
+superuser_ready() {
+  if can_switch_user; then
+    run_as postgres env -u PGPASSWORD psql -w -X -d postgres -tAc 'select 1' </dev/null >/dev/null 2>&1
+  else
+    pg_ready postgres ""
+  fi
 }
 
 install_postgres() {
@@ -371,7 +392,7 @@ install_postgres() {
   fi
 
   # A server that accepts the postgres superuser: create the role + database.
-  if has psql && pg_ready "postgres" ""; then
+  if has psql && superuser_ready; then
     DB_MODE="system"
     provision_role
     ok "PostgreSQL ready (db: $DB_NAME, role: $DB_USER)"
@@ -383,7 +404,7 @@ install_postgres() {
   # systemd, clusters need initdb). Any failure here must fall through to the
   # bundled database, never abort the run — hence the guarded call + check.
   if try_install_system_postgres; then
-    if start_system_postgres && pg_ready "postgres" ""; then
+    if start_system_postgres && superuser_ready; then
       DB_MODE="system"
       provision_role || true
       if pg_ready "$DB_USER" "$DB_PASSWORD" || pg_ready "$DB_USER"; then
@@ -459,7 +480,7 @@ start_system_postgres() {
 
 provision_role() {
   DB_PASSWORD="${DB_PASSWORD:-$(openssl_rand 24)}"
-  run_as postgres psql -v ON_ERROR_STOP=0 -q >/dev/null 2>&1 <<SQL || true
+  run_as postgres env -u PGPASSWORD psql -w -X -v ON_ERROR_STOP=0 -q >/dev/null 2>&1 <<SQL || true
     DO \$\$ BEGIN
       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${DB_USER}') THEN
         CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_PASSWORD}';
@@ -468,8 +489,8 @@ provision_role() {
       END IF;
     END \$\$;
 SQL
-  run_as postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" 2>/dev/null | grep -q 1 \
-    || run_as postgres createdb -O "${DB_USER}" "${DB_NAME}" 2>/dev/null || true
+  run_as postgres env -u PGPASSWORD psql -w -X -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" </dev/null 2>/dev/null | grep -q 1 \
+    || run_as postgres env -u PGPASSWORD createdb -w -O "${DB_USER}" "${DB_NAME}" </dev/null 2>/dev/null || true
 }
 
 # On Debian/macOS the local server may use peer auth for postgres; try without a
