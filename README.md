@@ -106,11 +106,21 @@ installs systemd services for the panel and the background worker.
 When it finishes it prints the sign-in details **before** the server takes over the
 terminal (so Codespaces, Docker and foreground runs all show them), and writes the
 same details to `<install-dir>/CREDENTIALS.txt` — readable only by root and the
-service account. Pass `--admin-password 'YourPassword'` to choose your own instead
-of the generated `ZK…!9` password.
+service account.
 
-> **It only prints the password on the first install.** If `.env` already exists it
-> is reused and no password is generated. To recover it: see `CREDENTIALS.txt`, read
+**Default first sign-in:**
+
+| Field | Value |
+|---|---|
+| Email | `admin@gmail.com` |
+| Password | `admin123` |
+
+Pass `--admin-email you@example.com --admin-password 'YourPassword'` to choose your
+own. These two values are the ones the README documents, so **change the password
+right after your first sign-in** — anyone who reads this repo knows them.
+
+> **Credentials are only written on the first install.** If `.env` already exists it
+> is reused and the default is not re-applied. To recover it: see `CREDENTIALS.txt`, read
 > `ADMIN_PASSWORD` from `.env`, or force a reset with
 > `npx tsx prisma/seed.ts --reset-admin` on the existing `ADMIN_PASSWORD`.
 

@@ -69,8 +69,8 @@ export async function runSeed() {
   invalidateSettings();
 
   console.log('[seed] admin account');
-  const adminEmail = (process.env.ADMIN_EMAIL ?? 'admin@example.com').toLowerCase();
-  const adminPassword = process.env.ADMIN_PASSWORD ?? 'Admin123!';
+  const adminEmail = (process.env.ADMIN_EMAIL ?? 'admin@gmail.com').toLowerCase();
+  const adminPassword = process.env.ADMIN_PASSWORD ?? 'admin123';
   const existingAdmin = await db.select().from(users).where(eq(users.email, adminEmail)).limit(1);
 
   let adminId: string;

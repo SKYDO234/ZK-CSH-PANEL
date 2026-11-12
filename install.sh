@@ -10,8 +10,8 @@
 #  Options:
 #     --port <n>            Port to serve the panel on            (default: 77777)
 #     --domain <host>       Public hostname, e.g. files.example.com
-#     --admin-email <mail>  First administrator email             (default: admin@<host>)
-#     --admin-password <pw> Administrator password                (default: generated)
+#     --admin-email <mail>  First administrator email   (default: admin@gmail.com)
+#     --admin-password <pw> Administrator password      (default: admin123)
 #     --dir <path>          Install directory         (default: /opt/zk-studio/vaultly)
 #     --no-db               Use an external DATABASE_URL from the environment
 #     --no-worker           Skip the background worker service
@@ -675,18 +675,27 @@ write_env() {
     $SUDO sed -i "s|^APP_URL=.*|APP_URL=\"${public_url}\"|" "$env_file" || true
     $SUDO sed -i "s|^PORT=.*|PORT=\"${PORT}\"|" "$env_file" || true
     grep -q '^PORT=' "$env_file" || echo "PORT=\"${PORT}\"" | $SUDO tee -a "$env_file" >/dev/null
-    # Reuse the stored credentials for the summary.
+    # Reuse the stored credentials for the summary. A default password is shown
+    # again on re-runs (it is already public); a custom one never is.
     ADMIN_EMAIL="$(grep -E '^ADMIN_EMAIL=' "$env_file" | head -1 | cut -d= -f2- | tr -d '"' || true)"
+    ADMIN_PASSWORD="$(grep -E '^ADMIN_PASSWORD=' "$env_file" | head -1 | cut -d= -f2- | tr -d '"' || true)"
+    if [ "$ADMIN_PASSWORD" = "admin123" ]; then
+      ADMIN_PASSWORD_GENERATED=1
+    else
+      ADMIN_PASSWORD=""
+      ADMIN_PASSWORD_GENERATED=0
+    fi
     ok ".env preserved"
     return
   fi
 
-  # "admin@localhost" is rejected by the app's email validator, so the
-  # domain-less default must be a real-looking address.
-  [ -n "$ADMIN_EMAIL" ] || ADMIN_EMAIL="admin@${DOMAIN:-vaultly.local}"
+  # Well-known first sign-in credentials. "admin@localhost" is rejected by the
+  # app's email validator, hence a real public domain. Override either value
+  # with --admin-email / --admin-password, or the ADMIN_* environment variables.
+  [ -n "$ADMIN_EMAIL" ] || ADMIN_EMAIL="admin@gmail.com"
   local generated_pw=0
   if [ -z "$ADMIN_PASSWORD" ]; then
-    ADMIN_PASSWORD="ZK$(openssl_rand 12)!9"
+    ADMIN_PASSWORD="admin123"
     generated_pw=1
   fi
   local auth_secret; auth_secret="$(openssl_rand 48)"
@@ -1035,6 +1044,9 @@ print_credentials() {
   if [ "${ADMIN_PASSWORD_GENERATED:-0}" = "1" ]; then
     printf '  %sAdmin password%s   %s%s%s\n' "$BOLD" "$RESET" "$YELLOW" "$ADMIN_PASSWORD" "$RESET"
     printf '  %s%s Also saved to %s/CREDENTIALS.txt (delete it after saving).%s\n' "$DIM" "" "$INSTALL_DIR" "$RESET"
+    if [ "$ADMIN_PASSWORD" = "admin123" ]; then
+      printf '  %s%s This is the well-known default — change it after your first sign-in.%s\n' "$YELLOW" "" "$RESET"
+    fi
   else
     printf '  %sAdmin password%s   (the one you supplied)\n' "$BOLD" "$RESET"
   fi
