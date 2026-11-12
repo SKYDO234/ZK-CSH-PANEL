@@ -58,7 +58,7 @@ IT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # "system"  = a real PostgreSQL server (installed or already running)
 # "embedded"= the bundled PostgreSQL that ships with this repo (no root, no apt)
-DB_MODE="system"
+DB_MODE="${DB_MODE:-embedded}"
 
 # Port sanity: TCP ports are 1–65535. 77777 (the requested default) is above
 # that range, so we fall back to the closest valid port instead of failing late.
@@ -273,6 +273,19 @@ free_port() {
   return 1
 }
 
+# True when a DATABASE_URL points at the bundled PostgreSQL (localhost, the
+# postgres superuser the embedded server is initialised with).
+is_embedded_url() {
+  printf '%s' "$1" | grep -qE '^postgresql://postgres:[^@]*@(127\.0\.0\.1|localhost)(:[0-9]+)?/'
+}
+
+# Reads one KEY="value" pair out of an env file (empty when absent).
+read_env_value() {
+  local key="$1" file="$2"
+  [ -f "$file" ] || return 0
+  $SUDO grep -E "^${key}=" "$file" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true
+}
+
 port_in_use() {
   port_open "${1:-$PORT}"
 }
@@ -342,6 +355,7 @@ install_node() {
 DB_NAME="vaultly"
 DB_USER="vaultly"
 DB_PASSWORD=""
+DB_MODE="embedded"
 
 PG_PORT=5432
 
@@ -377,12 +391,35 @@ install_postgres() {
     return
   fi
 
-  # The bundled database binds 127.0.0.1, so a busy 5432 (very common in
-  # containers and developer machines) must not make the install fail.
-  if [ -z "${LOCAL_PG_PORT:-}" ]; then
+  # An existing URL that is not the bundled server belongs to the user; leave it
+  # alone and never try to provision a local database for it.
+  local existing_url; existing_url="$(read_env_value DATABASE_URL "$INSTALL_DIR/.env")"
+  if [ -n "$existing_url" ] && ! is_embedded_url "$existing_url"; then
+    ok "Using the DATABASE_URL already in .env"
+    DB_MODE="system"
+    return 0
+  fi
+
+  # Whatever .env already says wins: on a re-run the data directory, the role
+  # password and the URL the app uses must all agree with the first install.
+  local stored_url stored_port
+  stored_url="$existing_url"
+  stored_port="$(read_env_value LOCAL_PG_PORT "$INSTALL_DIR/.env")"
+  if [ -n "$stored_port" ]; then
+    LOCAL_PG_PORT="$stored_port"
+  elif [ -z "${LOCAL_PG_PORT:-}" ]; then
+    # The bundled database binds 127.0.0.1, so a busy 5432 (very common in
+    # containers and developer machines) must not make the install fail.
     LOCAL_PG_PORT="$(free_port 5432 || echo 5432)"
     [ "$LOCAL_PG_PORT" = "5432" ] || info "Port 5432 is busy — bundled PostgreSQL will use $LOCAL_PG_PORT"
   fi
+  case "$stored_url" in
+    postgresql://postgres:*@127.0.0.1:*/*)
+      # Bundled database: reuse the exact password from the URL, otherwise the
+      # role ends up with a new password while the app keeps the old one.
+      DB_PASSWORD="$(printf '%s' "$stored_url" | sed -E 's|^postgresql://postgres:([^@]*)@.*|\1|')"
+      ;;
+  esac
 
   # Already-running server with our role? Use it.
   if pg_ready "$DB_USER"; then
@@ -655,6 +692,38 @@ build_app() {
   die "Fix the build error above and re-run ./install.sh"
 }
 
+# Rewrites only the database keys of an existing .env, after install_postgres has
+# settled on a mode/port/password. Everything else in the file is untouched.
+sync_env_database() {
+  local env_file="$INSTALL_DIR/.env"
+  [ -f "$env_file" ] || return 0
+  local url
+  if [ "$DB_MODE" = "embedded" ]; then
+    url="postgresql://postgres:postgres@127.0.0.1:${LOCAL_PG_PORT:-5432}/${DB_NAME}?schema=public"
+  else
+    url="postgresql://${DB_USER}:${DB_PASSWORD}@127.0.0.1:5432/${DB_NAME}?schema=public"
+  fi
+
+  local current_url; current_url="$(read_env_value DATABASE_URL "$env_file")"
+  if [ "$current_url" = "$url" ]; then
+    return 0
+  fi
+
+  if $SUDO grep -q '^DATABASE_URL=' "$env_file"; then
+    $SUDO sed -i "s|^DATABASE_URL=.*|DATABASE_URL=\"${url}\"|" "$env_file"
+  else
+    echo "DATABASE_URL=\"${url}\"" | $SUDO tee -a "$env_file" >/dev/null
+  fi
+  if [ "$DB_MODE" = "embedded" ]; then
+    if $SUDO grep -q '^LOCAL_PG_PORT=' "$env_file"; then
+      $SUDO sed -i "s|^LOCAL_PG_PORT=.*|LOCAL_PG_PORT=\"${LOCAL_PG_PORT:-5432}\"|" "$env_file"
+    else
+      echo "LOCAL_PG_PORT=\"${LOCAL_PG_PORT:-5432}\"" | $SUDO tee -a "$env_file" >/dev/null
+    fi
+  fi
+  info "Database settings updated in .env"
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Environment file
 # ─────────────────────────────────────────────────────────────────────────────
@@ -669,6 +738,9 @@ write_env() {
       *) public_url="https://${DOMAIN%/}" ;;
     esac
   fi
+
+  PRESERVED_DB_URL="$(read_env_value DATABASE_URL "$env_file")"
+  PRESERVED_PG_PORT="$(read_env_value LOCAL_PG_PORT "$env_file")"
 
   if $SUDO test -f "$env_file"; then
     info "Existing .env kept (only port-related values are updated)"
@@ -707,6 +779,8 @@ write_env() {
 
   local database_url
   if [ "$DB_MODE" = "embedded" ]; then
+    # The bundled server is initialised with user/password postgres/postgres, and
+    # it may live on a port other than 5432 when that port is already taken.
     database_url="postgresql://postgres:postgres@127.0.0.1:${LOCAL_PG_PORT:-5432}/${DB_NAME}?schema=public"
   else
     database_url="postgresql://${DB_USER}:${DB_PASSWORD}@127.0.0.1:5432/${DB_NAME}?schema=public"
@@ -716,7 +790,7 @@ write_env() {
 # Generated by install.sh on $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # Re-running the installer never overwrites this file.
 
-DATABASE_URL="${database_url}"
+DATABASE_URL="${PRESERVED_DB_URL:-$database_url}"
 AUTH_SECRET="${auth_secret}"
 APP_URL="${public_url}"
 PORT="${PORT}"
@@ -733,7 +807,7 @@ ENV
 
   if [ "$DB_MODE" = "embedded" ]; then
     $SUDO tee -a "$env_file" >/dev/null <<ENV
-LOCAL_PG_PORT="${LOCAL_PG_PORT:-5432}"
+LOCAL_PG_PORT="${PRESERVED_PG_PORT:-${LOCAL_PG_PORT:-5432}}"
 LOCAL_PG_DATABASE="${DB_NAME}"
 ENV
   fi
@@ -1035,7 +1109,7 @@ public_url_display() {
 # owns the terminal. Codespaces, Docker and macOS all take this path.
 print_credentials() {
   printf '\n%s╭──────────────────────────────────────────────────────────────╮%s\n' "$CYAN" "$RESET"
-  printf '%s│%s  %sZK STUDIO · Vaultly is installed%s                        %s│%s\n' "$CYAN" "$RESET" "$BOLD" "$RESET" "$CYAN" "$RESET"
+  printf '%s│%s  %sZK-CSH-PANEL is installed%s                            %s│%s\n' "$CYAN" "$RESET" "$BOLD" "$RESET" "$CYAN" "$RESET"
   printf '%s╰──────────────────────────────────────────────────────────────╯%s\n\n' "$CYAN" "$RESET"
 
   printf '  %sPanel%s            http://localhost:%s\n' "$BOLD" "$RESET" "$PORT"
@@ -1099,8 +1173,12 @@ main() {
   install_node
   prepare_user_and_dir
   install_deps
-  install_postgres
+  # .env comes first: it is where the generated DB password and the bundled
+  # server's port are recorded, and both must be known before the database role
+  # is provisioned. Existing values are reused, so this is idempotent.
   write_env
+  install_postgres
+  sync_env_database
   start_embedded_db
   migrate_and_seed
   build_app

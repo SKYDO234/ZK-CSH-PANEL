@@ -140,7 +140,9 @@ Useful flags: `--admin-email`, `--admin-password`, `--no-db` (use an external
 
 **Notes**
 - Re-running the installer is safe: it updates the code, re-applies migrations and
-  leaves your `.env`, database and admin account untouched.
+  leaves your `.env`, database and admin account untouched. The database port and
+  URL recorded in `.env` are reused, so an existing install always keeps talking to
+  the same server even when 5432 was busy the first time.
 - If PostgreSQL can't be installed (no root, offline package repos, container), the
   installer automatically falls back to the bundled PostgreSQL that ships with this
   repo — no separate database server required. If port 5432 is already taken, the
