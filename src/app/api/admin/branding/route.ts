@@ -44,13 +44,15 @@ export const POST = handler(async (req: NextRequest) => {
 
   const url = `/api/branding/${encodeURIComponent(key.split('/').slice(1).join('/'))}`;
 
-  if (kind === 'logo' || kind === 'favicon' || kind === 'login') {
+  if (kind === 'logo' || kind === 'favicon' || kind === 'login' || kind === 'studio') {
     const patch =
       kind === 'logo'
         ? { logoUrl: url }
         : kind === 'favicon'
           ? { faviconUrl: url }
-          : { loginBackgroundUrl: url };
+          : kind === 'studio'
+            ? { studioLogoUrl: url }
+            : { loginBackgroundUrl: url };
     await saveSettingsGroup('appearance', patch, session.id);
   }
 

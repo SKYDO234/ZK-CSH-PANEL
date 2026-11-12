@@ -269,9 +269,13 @@ export function ShareView({ token, file, share, ownerName, branding }: ShareView
           <div className="card p-4">
             <p className="text-xs text-muted">Shared via</p>
             <Link href="/" className="mt-1 flex items-center gap-2 text-sm font-semibold text-ink hover:text-brand">
-              {branding.logoUrl ? (
+              {branding.markUrl || branding.logoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={branding.logoUrl} alt="" className="h-6 w-6 rounded object-contain" />
+                <img
+                  src={branding.markUrl ?? (branding.logoUrl as string)}
+                  alt=""
+                  className="h-6 w-6 rounded object-contain"
+                />
               ) : null}
               {branding.platformName}
             </Link>

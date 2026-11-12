@@ -11,7 +11,14 @@ import { GB } from './format';
 export type AppearanceSettings = {
   platformName: string;
   tagline: string;
+  /** Panel logo (the ZK-CSH-PANEL mark). */
   logoUrl: string | null;
+  /** Small square mark used for compact slots: favicon, avatars, share headers. */
+  markUrl: string | null;
+  /** Studio credit: the ZK STUDIO logo shown in the "Made by" footer. */
+  studioLogoUrl: string | null;
+  /** Studio credit line. Non-empty means the credit is shown. */
+  studioName: string;
   faviconUrl: string | null;
   primaryColor: string;
   secondaryColor: string;
@@ -126,9 +133,12 @@ export type PlatformSettings = {
 
 export const DEFAULT_SETTINGS: PlatformSettings = {
   appearance: {
-    platformName: 'ZK STUDIO',
+    platformName: 'ZK-CSH-PANEL',
     tagline: 'Private cloud storage, under your control.',
-    logoUrl: '/zk-studio.png',
+    logoUrl: '/panel-logo.png',
+    markUrl: '/panel-mark.png',
+    studioLogoUrl: '/zk-studio.png',
+    studioName: 'ZK STUDIO',
     faviconUrl: '/favicon.ico',
     primaryColor: '#1f7cf0',
     secondaryColor: '#0b5fd0',
@@ -138,7 +148,7 @@ export const DEFAULT_SETTINGS: PlatformSettings = {
     loginSubtitle: 'Sign in to access your storage vault.',
     loginBackgroundUrl: null,
     welcomeMessage: 'Everything you upload stays private until you choose to share it.',
-    footerText: 'ZK STUDIO — self-hosted cloud storage.',
+    footerText: 'Self-hosted cloud storage.',
     supportEmail: 'support@example.com',
     showPoweredBy: true,
     sidebarStyle: 'dark',
@@ -150,7 +160,7 @@ export const DEFAULT_SETTINGS: PlatformSettings = {
     customDomain: null,
   },
   general: {
-    platformName: 'Vaultly',
+    platformName: 'ZK-CSH-PANEL',
     locale: 'en',
     timezone: 'UTC',
     dateFormat: 'relative',
@@ -202,7 +212,7 @@ export const DEFAULT_SETTINGS: PlatformSettings = {
   email: {
     enabled: false,
     provider: 'console',
-    fromName: 'Vaultly',
+    fromName: 'ZK-CSH-PANEL',
     fromEmail: 'no-reply@example.com',
     smtpHost: '',
     smtpPort: 587,
@@ -320,6 +330,9 @@ export type PublicBranding = {
   platformName: string;
   tagline: string;
   logoUrl: string | null;
+  markUrl: string | null;
+  studioLogoUrl: string | null;
+  studioName: string;
   faviconUrl: string | null;
   primaryColor: string;
   secondaryColor: string;
@@ -348,6 +361,9 @@ export function toPublicBranding(s: PlatformSettings): PublicBranding {
     platformName: s.appearance.platformName || s.general.platformName,
     tagline: s.appearance.tagline,
     logoUrl: s.appearance.logoUrl,
+    markUrl: s.appearance.markUrl,
+    studioLogoUrl: s.appearance.studioLogoUrl,
+    studioName: s.appearance.studioName,
     faviconUrl: s.appearance.faviconUrl,
     primaryColor: s.appearance.primaryColor,
     secondaryColor: s.appearance.secondaryColor,

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { getSettings, toPublicBranding } from '@/lib/settings';
 import { Logo } from '@/components/branding/logo';
+import { StudioCredit } from '@/components/branding/studio-credit';
 import { ThemeToggle } from '@/components/layout/theme-toggle';
 
 export default async function AuthLayout({ children }: { children: React.ReactNode }) {
@@ -32,7 +33,7 @@ export default async function AuthLayout({ children }: { children: React.ReactNo
 
       <header className="relative z-10 flex items-center justify-between px-6 py-5">
         <Link href="/" aria-label={branding.platformName}>
-          <Logo name={branding.platformName} logoUrl={branding.logoUrl} />
+          <Logo name={branding.platformName} logoUrl={branding.logoUrl} markUrl={branding.markUrl} full />
         </Link>
         {branding.allowUserThemeToggle ? <ThemeToggle compact /> : null}
       </header>
@@ -41,8 +42,9 @@ export default async function AuthLayout({ children }: { children: React.ReactNo
         {children}
       </main>
 
-      <footer className="relative z-10 px-6 py-5 text-center text-xs text-muted">
+      <footer className="relative z-10 flex flex-col items-center gap-2.5 px-6 py-5 text-center text-xs text-muted">
         <p>{branding.footerText}</p>
+        {branding.showPoweredBy ? <StudioCredit branding={branding} size="md" /> : null}
         {branding.allowUserThemeToggle ? null : <span className="sr-only">Theme switching disabled</span>}
       </footer>
     </div>

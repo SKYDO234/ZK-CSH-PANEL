@@ -25,7 +25,7 @@ export async function generateMetadata(): Promise<Metadata> {
       robots: { index: true, follow: true },
     };
   } catch {
-    return { title: 'Vaultly' };
+    return { title: 'ZK-CSH-PANEL' };
   }
 }
 

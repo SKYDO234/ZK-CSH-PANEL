@@ -10,8 +10,8 @@
 #  Options:
 #     --port <n>            Port to serve the panel on            (default: 77777)
 #     --domain <host>       Public hostname, e.g. files.example.com
-#     --admin-email <mail>  First administrator email             (default: admin@<host>)
-#     --admin-password <pw> Administrator password                (default: generated)
+#     --admin-email <mail>  First administrator email   (default: admin@gmail.com)
+#     --admin-password <pw> Administrator password      (default: admin123)
 #     --dir <path>          Install directory         (default: /opt/zk-studio/vaultly)
 #     --no-db               Use an external DATABASE_URL from the environment
 #     --no-worker           Skip the background worker service
@@ -343,9 +343,30 @@ DB_NAME="vaultly"
 DB_USER="vaultly"
 DB_PASSWORD=""
 
+PG_PORT=5432
+
+# Every psql call runs with -w (never prompt) and stdin from /dev/null. Without
+# this, a container cluster using scram-sha-256 makes psql print
+# "Password for user postgres:" and wait for input forever — the install then
+# looks frozen on "Checking PostgreSQL".
 pg_ready() {
   # True when we can run SQL against the server.
-  PGPASSWORD="${2:-$DB_PASSWORD}" psql -h 127.0.0.1 -p 5432 -U "${1:-$DB_USER}" -d postgres -tAc 'select 1' >/dev/null 2>&1
+  local user="${1:-$DB_USER}" pass="${2-$DB_PASSWORD}"
+  if [ -n "$pass" ]; then
+    PGPASSWORD="$pass" psql -w -X -h 127.0.0.1 -p "$PG_PORT" -U "$user" -d postgres -tAc 'select 1' </dev/null >/dev/null 2>&1
+  else
+    env -u PGPASSWORD psql -w -X -h 127.0.0.1 -p "$PG_PORT" -U "$user" -d postgres -tAc 'select 1' </dev/null >/dev/null 2>&1
+  fi
+}
+
+# True when the postgres superuser can run SQL. Prefers the local socket as the
+# postgres OS user (peer auth — no password involved), then falls back to TCP.
+superuser_ready() {
+  if can_switch_user; then
+    run_as postgres env -u PGPASSWORD psql -w -X -d postgres -tAc 'select 1' </dev/null >/dev/null 2>&1
+  else
+    pg_ready postgres ""
+  fi
 }
 
 install_postgres() {
@@ -371,7 +392,7 @@ install_postgres() {
   fi
 
   # A server that accepts the postgres superuser: create the role + database.
-  if has psql && pg_ready "postgres" ""; then
+  if has psql && superuser_ready; then
     DB_MODE="system"
     provision_role
     ok "PostgreSQL ready (db: $DB_NAME, role: $DB_USER)"
@@ -383,7 +404,7 @@ install_postgres() {
   # systemd, clusters need initdb). Any failure here must fall through to the
   # bundled database, never abort the run — hence the guarded call + check.
   if try_install_system_postgres; then
-    if start_system_postgres && pg_ready "postgres" ""; then
+    if start_system_postgres && superuser_ready; then
       DB_MODE="system"
       provision_role || true
       if pg_ready "$DB_USER" "$DB_PASSWORD" || pg_ready "$DB_USER"; then
@@ -459,7 +480,7 @@ start_system_postgres() {
 
 provision_role() {
   DB_PASSWORD="${DB_PASSWORD:-$(openssl_rand 24)}"
-  run_as postgres psql -v ON_ERROR_STOP=0 -q >/dev/null 2>&1 <<SQL || true
+  run_as postgres env -u PGPASSWORD psql -w -X -v ON_ERROR_STOP=0 -q >/dev/null 2>&1 <<SQL || true
     DO \$\$ BEGIN
       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${DB_USER}') THEN
         CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_PASSWORD}';
@@ -468,8 +489,8 @@ provision_role() {
       END IF;
     END \$\$;
 SQL
-  run_as postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" 2>/dev/null | grep -q 1 \
-    || run_as postgres createdb -O "${DB_USER}" "${DB_NAME}" 2>/dev/null || true
+  run_as postgres env -u PGPASSWORD psql -w -X -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" </dev/null 2>/dev/null | grep -q 1 \
+    || run_as postgres env -u PGPASSWORD createdb -w -O "${DB_USER}" "${DB_NAME}" </dev/null 2>/dev/null || true
 }
 
 # On Debian/macOS the local server may use peer auth for postgres; try without a
@@ -654,18 +675,27 @@ write_env() {
     $SUDO sed -i "s|^APP_URL=.*|APP_URL=\"${public_url}\"|" "$env_file" || true
     $SUDO sed -i "s|^PORT=.*|PORT=\"${PORT}\"|" "$env_file" || true
     grep -q '^PORT=' "$env_file" || echo "PORT=\"${PORT}\"" | $SUDO tee -a "$env_file" >/dev/null
-    # Reuse the stored credentials for the summary.
+    # Reuse the stored credentials for the summary. A default password is shown
+    # again on re-runs (it is already public); a custom one never is.
     ADMIN_EMAIL="$(grep -E '^ADMIN_EMAIL=' "$env_file" | head -1 | cut -d= -f2- | tr -d '"' || true)"
+    ADMIN_PASSWORD="$(grep -E '^ADMIN_PASSWORD=' "$env_file" | head -1 | cut -d= -f2- | tr -d '"' || true)"
+    if [ "$ADMIN_PASSWORD" = "admin123" ]; then
+      ADMIN_PASSWORD_GENERATED=1
+    else
+      ADMIN_PASSWORD=""
+      ADMIN_PASSWORD_GENERATED=0
+    fi
     ok ".env preserved"
     return
   fi
 
-  # "admin@localhost" is rejected by the app's email validator, so the
-  # domain-less default must be a real-looking address.
-  [ -n "$ADMIN_EMAIL" ] || ADMIN_EMAIL="admin@${DOMAIN:-vaultly.local}"
+  # Well-known first sign-in credentials. "admin@localhost" is rejected by the
+  # app's email validator, hence a real public domain. Override either value
+  # with --admin-email / --admin-password, or the ADMIN_* environment variables.
+  [ -n "$ADMIN_EMAIL" ] || ADMIN_EMAIL="admin@gmail.com"
   local generated_pw=0
   if [ -z "$ADMIN_PASSWORD" ]; then
-    ADMIN_PASSWORD="ZK$(openssl_rand 12)!9"
+    ADMIN_PASSWORD="admin123"
     generated_pw=1
   fi
   local auth_secret; auth_secret="$(openssl_rand 48)"
@@ -1014,6 +1044,9 @@ print_credentials() {
   if [ "${ADMIN_PASSWORD_GENERATED:-0}" = "1" ]; then
     printf '  %sAdmin password%s   %s%s%s\n' "$BOLD" "$RESET" "$YELLOW" "$ADMIN_PASSWORD" "$RESET"
     printf '  %s%s Also saved to %s/CREDENTIALS.txt (delete it after saving).%s\n' "$DIM" "" "$INSTALL_DIR" "$RESET"
+    if [ "$ADMIN_PASSWORD" = "admin123" ]; then
+      printf '  %s%s This is the well-known default — change it after your first sign-in.%s\n' "$YELLOW" "" "$RESET"
+    fi
   else
     printf '  %sAdmin password%s   (the one you supplied)\n' "$BOLD" "$RESET"
   fi

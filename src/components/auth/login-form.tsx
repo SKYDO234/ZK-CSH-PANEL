@@ -55,7 +55,7 @@ export function LoginForm({
       <div className="card overflow-hidden animate-slide-up">
         <div className="border-b border-line bg-gradient-to-br from-brand/[0.07] to-secondary/[0.05] px-7 pb-7 pt-8">
           <div className="mb-5 lg:hidden">
-            <Logo name={branding.platformName} logoUrl={branding.logoUrl} />
+            <Logo name={branding.platformName} logoUrl={branding.logoUrl} markUrl={branding.markUrl} />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-ink">{branding.loginTitle}</h1>
           <p className="mt-1.5 text-sm text-muted">{branding.loginSubtitle}</p>

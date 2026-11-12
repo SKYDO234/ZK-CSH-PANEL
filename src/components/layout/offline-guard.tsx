@@ -6,7 +6,7 @@ import { Logo } from '@/components/branding/logo';
 export function OfflineGuard({ message, branding }: { message: string; branding: PublicBranding }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-canvas px-6 text-center">
-      <Logo name={branding.platformName} logoUrl={branding.logoUrl} size="lg" />
+      <Logo name={branding.platformName} logoUrl={branding.logoUrl} markUrl={branding.markUrl} size="lg" />
       <div className="mt-8 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-600">
         <Wrench className="h-6 w-6" />
       </div>
