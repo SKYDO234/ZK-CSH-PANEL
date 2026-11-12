@@ -470,7 +470,9 @@ write_env() {
     return
   fi
 
-  [ -n "$ADMIN_EMAIL" ] || ADMIN_EMAIL="admin@${DOMAIN:-localhost}"
+  # "admin@localhost" is rejected by the app's email validator, so the
+  # domain-less default must be a real-looking address.
+  [ -n "$ADMIN_EMAIL" ] || ADMIN_EMAIL="admin@${DOMAIN:-vaultly.local}"
   local generated_pw=0
   if [ -z "$ADMIN_PASSWORD" ]; then
     ADMIN_PASSWORD="ZK$(openssl_rand 12)!9"
@@ -537,6 +539,25 @@ ENV
 
   ADMIN_PASSWORD_GENERATED="$generated_pw"
   ok "Configuration written to $env_file"
+
+  # Save a root-only copy of the credentials so they can always be recovered,
+  # even if the terminal output was lost or the installer ran non-interactively.
+  if [ "$generated_pw" = "1" ]; then
+    $SUDO tee "${INSTALL_DIR}/CREDENTIALS.txt" >/dev/null <<CREDS
+ZK STUDIO · Vaultly — first sign-in
+Generated $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  URL:      ${public_url}
+  Email:    ${ADMIN_EMAIL}
+  Password: ${ADMIN_PASSWORD}
+
+Change this password after signing in.
+Delete this file once you have saved the password elsewhere.
+CREDS
+    $SUDO chmod 600 "${INSTALL_DIR}/CREDENTIALS.txt"
+    [ "$OS" = linux ] && { [ "$IS_ROOT" -eq 1 ] || [ -n "$SUDO" ]; } && \
+      $SUDO chown "$APP_USER":"$APP_USER" "${INSTALL_DIR}/CREDENTIALS.txt" 2>/dev/null || true
+  fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -705,6 +726,7 @@ install_firewall_rules() {
 }
 
 run_foreground() {
+  print_credentials
   step "Starting the panel in the foreground on port $PORT"
 
   local db_pid=""
@@ -769,29 +791,40 @@ do_uninstall() {
 # ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
-print_summary() {
-  local host_display
-  if [ -n "$DOMAIN" ]; then host_display="https://${DOMAIN#http*://}"
+public_url_display() {
+  if [ -n "$DOMAIN" ]; then
+    printf 'https://%s' "${DOMAIN#http*://}"
   else
-    host_display="http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo localhost):${PORT}"
+    local ip
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    [ -n "$ip" ] || ip="localhost"
+    printf 'http://%s:%s' "$ip" "$PORT"
   fi
+}
 
+# Printed before the foreground server starts, because once `next start` runs it
+# owns the terminal. Codespaces, Docker and macOS all take this path.
+print_credentials() {
   printf '\n%s╭──────────────────────────────────────────────────────────────╮%s\n' "$CYAN" "$RESET"
-  printf '%s│%s  %sZK STUDIO · Vaultly is installed and running%s             %s│%s\n' "$CYAN" "$RESET" "$BOLD" "$RESET" "$CYAN" "$RESET"
+  printf '%s│%s  %sZK STUDIO · Vaultly is installed%s                        %s│%s\n' "$CYAN" "$RESET" "$BOLD" "$RESET" "$CYAN" "$RESET"
   printf '%s╰──────────────────────────────────────────────────────────────╯%s\n\n' "$CYAN" "$RESET"
 
   printf '  %sPanel%s            http://localhost:%s\n' "$BOLD" "$RESET" "$PORT"
-  printf '  %sNetwork%s          %s\n' "$BOLD" "$RESET" "$host_display"
+  printf '  %sNetwork%s          %s\n' "$BOLD" "$RESET" "$(public_url_display)"
   printf '  %sAdmin email%s      %s\n' "$BOLD" "$RESET" "$ADMIN_EMAIL"
   if [ "${ADMIN_PASSWORD_GENERATED:-0}" = "1" ]; then
     printf '  %sAdmin password%s   %s%s%s\n' "$BOLD" "$RESET" "$YELLOW" "$ADMIN_PASSWORD" "$RESET"
-    printf '  %s%s Save this password — it is only shown once.%s\n' "$DIM" "" "$RESET"
+    printf '  %s%s Also saved to %s/CREDENTIALS.txt (delete it after saving).%s\n' "$DIM" "" "$INSTALL_DIR" "$RESET"
   else
     printf '  %sAdmin password%s   (the one you supplied)\n' "$BOLD" "$RESET"
   fi
   printf '  %sInstall dir%s      %s\n' "$BOLD" "$RESET" "$INSTALL_DIR"
   printf '  %sConfig%s           %s/.env\n' "$BOLD" "$RESET" "$INSTALL_DIR"
   printf '  %sStorage%s          %s/storage/uploads\n\n' "$BOLD" "$RESET" "$INSTALL_DIR"
+}
+
+print_summary() {
+  print_credentials
 
   if [ -n "$INIT" ]; then
     printf '  %sServices%s\n' "$BOLD" "$RESET"
@@ -802,8 +835,8 @@ print_summary() {
   printf '  %sNext steps%s\n' "$BOLD" "$RESET"
   printf '    1. Open the panel and change the admin password.\n'
   printf '    2. Admin → Settings → Email: configure SMTP for password resets.\n'
-  if [ "$PUBLIC_S3" = "0" ] && [ "$USE_LOCAL_DB" -eq 1 ]; then
-    printf '    3. For scale, switch to S3/R2 (see .env.example).\n'
+  if [ "$DB_MODE" = "embedded" ]; then
+    printf '    3. Single-server install: switch to S3/R2 when you outgrow this box.\n'
   fi
   [ -n "$DOMAIN" ] || printf '    3. Expose it publicly behind Caddy/nginx for HTTPS.\n'
   printf '\n  %sRe-run this installer any time to update the code.%s\n\n' "$DIM" "$RESET"
