@@ -5,7 +5,7 @@ import { db, shares } from '@/db';
 import { ApiError, handler, ok, parseBody, readJson } from '@/lib/api';
 import { resolveShare } from '@/lib/files';
 import { verifyPassword } from '@/lib/crypto';
-import { requestOrigin } from '@/lib/request';
+import { isHttpsRequest, requestOrigin } from '@/lib/request';
 import { hit } from '@/lib/rate-limit';
 import { clientIp } from '@/lib/request';
 
@@ -81,7 +81,7 @@ export const POST = handler(async (req: NextRequest, context) => {
   res.cookies.set(`vaultly_share_${token}`, cookieValue, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: await isHttpsRequest(),
     path: '/',
     maxAge: 60 * 60 * 12,
   });

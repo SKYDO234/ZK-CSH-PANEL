@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { db, roles, sessions, users } from '@/db';
 import { randomToken, sha256 } from './crypto';
 import { getSettings } from './settings';
-import { clientIp, userAgent } from './request';
+import { clientIp, isHttpsRequest, userAgent } from './request';
 import type { Permission, RoleName } from './permissions';
 import { hasPermission, isAdmin } from './permissions';
 
@@ -74,7 +74,7 @@ export async function setSessionCookie(token: string, expiresAt: Date) {
   store.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: await isHttpsRequest(),
     path: '/',
     expires: expiresAt,
   });

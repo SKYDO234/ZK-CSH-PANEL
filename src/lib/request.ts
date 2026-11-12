@@ -1,3 +1,4 @@
+import { headers } from 'next/headers';
 import { NextRequest } from 'next/server';
 import { trustProxy } from './env';
 
@@ -20,6 +21,23 @@ export function clientIp(req: NextRequest | Request): string {
     if (cfIp) return cfIp.trim();
   }
   return '127.0.0.1';
+}
+
+/**
+ * True when the current request reached us over HTTPS, directly or through a
+ * trusted proxy. Cookies flagged `Secure` are dropped by browsers on plain
+ * HTTP, which would make sign-in fail silently — so decide per request.
+ */
+export function httpsFromHeaders(h: Headers): boolean {
+  const proto = h.get('x-forwarded-proto')?.split(',')[0]?.trim().toLowerCase();
+  if (proto) return proto === 'https';
+  const configured = process.env.APP_URL;
+  if (configured) return configured.startsWith('https://');
+  return false;
+}
+
+export async function isHttpsRequest(): Promise<boolean> {
+  return httpsFromHeaders(await headers());
 }
 
 export function userAgent(req: NextRequest | Request): string {
