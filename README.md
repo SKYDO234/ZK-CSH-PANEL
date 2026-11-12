@@ -133,8 +133,10 @@ Useful flags: `--admin-email`, `--admin-password`, `--no-db` (use an external
   repo — no separate database server required.
 - Export `S3_BUCKET`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` before running to
   use S3/R2/B2 instead of local disk.
-- TCP ports only go up to **65535**, so a request for `77777` is clamped to `65535`
-  with a warning. Pick a normal port with `--port`.
+- TCP ports only go up to **65535**, so `77777` is not a valid port; it is replaced
+  with `8080` and a warning is printed. Pass `--port` to choose your own.
+- In GitHub Codespaces run `sudo bash install.sh --port 3000`, then open the **Ports**
+  tab and forward port 3000 — Codespaces only auto-forwards common ports.
 
 ---
 

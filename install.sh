@@ -62,9 +62,9 @@ validate_port() {
   esac
   if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
     local requested="$PORT"
-    PORT=65535
-    warn "Port ${requested} is outside the valid TCP range (1–65535); using ${PORT} instead."
-    warn "Pass --port <n> to choose a different port (e.g. --port 8080)."
+    PORT=8080
+    warn "Port ${requested} is not a valid TCP port (1–65535); using ${PORT} instead."
+    warn "Re-run with --port <n> to pick your own (e.g. --port 3000)."
   fi
 }
 
@@ -307,7 +307,7 @@ try_install_system_postgres() {
             $SUDO postgresql-setup --initdb >/dev/null 2>&1 || true ;;
     apk)    pkg_install postgresql postgresql-contrib >/dev/null 2>&1 || return 1 ;;
     pacman) pkg_install postgresql >/dev/null 2>&1 || return 1
-            $SUDO -u postgres initdb -D /var/lib/postgres/data >/dev/null 2>&1 || true ;;
+            run_as postgres initdb -D /var/lib/postgres/data >/dev/null 2>&1 || true ;;
     *)      return 1 ;;
   esac
   has psql
@@ -330,7 +330,7 @@ start_system_postgres() {
 
 provision_role() {
   DB_PASSWORD="${DB_PASSWORD:-$(openssl_rand 24)}"
-  $SUDO -u postgres psql -v ON_ERROR_STOP=0 -q >/dev/null 2>&1 <<SQL || true
+  run_as postgres psql -v ON_ERROR_STOP=0 -q >/dev/null 2>&1 <<SQL || true
     DO \$\$ BEGIN
       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${DB_USER}') THEN
         CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_PASSWORD}';
@@ -339,8 +339,8 @@ provision_role() {
       END IF;
     END \$\$;
 SQL
-  $SUDO -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" 2>/dev/null | grep -q 1 \
-    || $SUDO -u postgres createdb -O "${DB_USER}" "${DB_NAME}" 2>/dev/null || true
+  run_as postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" 2>/dev/null | grep -q 1 \
+    || run_as postgres createdb -O "${DB_USER}" "${DB_NAME}" 2>/dev/null || true
 }
 
 # On Debian/macOS the local server may use peer auth for postgres; try without a
@@ -407,12 +407,44 @@ copy_payload() {
   fi
 }
 
+# Runs "$@" as <user>. Works whether we are root (no sudo prefix) or relying on
+# sudo; `sudo -u` and `runuser -u` both need the switch flag, which is what broke
+# earlier when $SUDO expanded to nothing under a plain root shell.
+run_as() {
+  local user="$1"; shift
+  [ "$#" -gt 0 ] || return 0
+
+  if [ "$(id -u)" -eq 0 ]; then
+    if has runuser; then
+      runuser -u "$user" -- "$@"
+    elif has sudo; then
+      sudo -u "$user" -- "$@"
+    else
+      su -s /bin/sh "$user" -c "$(printf '%q ' "$@")"
+    fi
+    return
+  fi
+
+  if [ -n "$SUDO" ]; then
+    $SUDO -u "$user" -- "$@"
+    return
+  fi
+
+  # Cannot switch users — run as the current user if that is already the target.
+  if [ "$(id -un)" = "$user" ]; then "$@"; else return 1; fi
+}
+
+# True when we can switch to the application user.
+can_switch_user() {
+  [ "$OS" = linux ] || return 1
+  id "$APP_USER" >/dev/null 2>&1 || return 1
+  [ "$(id -u)" -eq 0 ] && return 0
+  [ -n "$SUDO" ]
+}
+
 as_user() {
-  # Run application commands as the unprivileged service account whenever we
-  # have the means to switch (root or passwordless-capable sudo).
-  if [ "$OS" = linux ] && { [ "$IS_ROOT" -eq 1 ] || [ -n "$SUDO" ]; } \
-     && id "$APP_USER" >/dev/null 2>&1; then
-    $SUDO -u "$APP_USER" -- env PATH="$PATH" HOME="/home/$APP_USER" "$@"
+  if can_switch_user; then
+    run_as "$APP_USER" env PATH="$PATH" HOME="/home/$APP_USER" "$@"
   else
     "$@"
   fi
@@ -435,13 +467,28 @@ install_deps() {
 
 build_app() {
   step "Building the panel (this takes a minute)"
-  if as_user env bash -c "cd '$INSTALL_DIR' && npm run build" >/tmp/zk-build.log 2>&1; then
+  # Log inside the install dir: /tmp may not be writable by the service user and
+  # a stale file there could make the redirect itself fail.
+  local log="${INSTALL_DIR}/.data/build.log"
+  $SUDO mkdir -p "${INSTALL_DIR}/.data"
+  $SUDO rm -f "$log" 2>/dev/null || true
+  [ "$OS" = linux ] && can_switch_user && $SUDO chown -R "$APP_USER":"$APP_USER" "${INSTALL_DIR}/.data" 2>/dev/null || true
+
+  local status=0
+  as_user env bash -c "cd '$INSTALL_DIR' && npm run build > '$log' 2>&1" || status=$?
+
+  if [ "$status" -eq 0 ]; then
     ok "Production build complete"
-  else
-    warn "Build failed — last 25 lines:"
-    tail -25 /tmp/zk-build.log >&2
-    die "Fix the build error above and re-run ./install.sh"
+    return
   fi
+
+  if [ -s "$log" ]; then
+    warn "Build failed — last 25 lines:"
+    tail -25 "$log" >&2
+  else
+    warn "The build did not produce any output (exit $status)."
+  fi
+  die "Fix the build error above and re-run ./install.sh"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
