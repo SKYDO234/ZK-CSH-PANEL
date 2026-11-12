@@ -135,8 +135,12 @@ Useful flags: `--admin-email`, `--admin-password`, `--no-db` (use an external
   use S3/R2/B2 instead of local disk.
 - TCP ports only go up to **65535**, so `77777` is not a valid port; it is replaced
   with `8080` and a warning is printed. Pass `--port` to choose your own.
-- In GitHub Codespaces run `sudo bash install.sh --port 3000`, then open the **Ports**
-  tab and forward port 3000 — Codespaces only auto-forwards common ports.
+- The default port is **8080**. In GitHub Codespaces use `sudo bash install.sh --port 3000`
+  and open the **Ports** tab to forward port 3000 — Codespaces only auto-forwards
+  common ports.
+- Root is required. Run it with `sudo`; if your user has passwordless sudo (the
+  Codespaces default) the script re-executes itself as root automatically, so you
+  never get a password prompt in the middle of the install.
 
 ---
 

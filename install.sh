@@ -28,9 +28,12 @@ set -Eeuo pipefail
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
+ORIG_ARGS=("$@")
+
 APP_NAME="zk-studio-vaultly"
 APP_USER="zkstudio"
-PORT="${PORT:-77777}"
+PORT="${PORT:-8080}"
+PORT_EXPLICIT=0
 DOMAIN=""
 ADMIN_EMAIL=""
 ADMIN_PASSWORD=""
@@ -63,8 +66,10 @@ validate_port() {
   if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
     local requested="$PORT"
     PORT=8080
-    warn "Port ${requested} is not a valid TCP port (1–65535); using ${PORT} instead."
-    warn "Re-run with --port <n> to pick your own (e.g. --port 3000)."
+    if [ "$PORT_EXPLICIT" -eq 1 ]; then
+      warn "Port ${requested} is not a valid TCP port (1–65535); using ${PORT} instead."
+      warn "Re-run with --port <n> to pick your own (e.g. --port 3000)."
+    fi
   fi
 }
 
@@ -93,7 +98,7 @@ usage() { sed -n '3,25p' "${BASH_SOURCE[0]}" | sed 's/^#//; s/^ //'; exit 0; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --port)           PORT="${2:?--port needs a value}"; shift 2 ;;
+    --port)           PORT="${2:?--port needs a value}"; PORT_EXPLICIT=1; shift 2 ;;
     --domain)         DOMAIN="${2:?--domain needs a value}"; shift 2 ;;
     --admin-email)    ADMIN_EMAIL="${2:?}"; shift 2 ;;
     --admin-password) ADMIN_PASSWORD="${2:?}"; shift 2 ;;
@@ -111,6 +116,36 @@ done
 # Platform detection
 # ─────────────────────────────────────────────────────────────────────────────
 DISTRO=""; PKG=""; IS_ROOT=0; SUDO=""; IN_CONTAINER=0; INIT=""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Privilege handling
+# ─────────────────────────────────────────────────────────────────────────────
+elevate() {
+  [ "$(id -u)" -eq 0 ] && return 0
+
+  if [ "${ZK_INSTALL_ELEVATED:-0}" = "1" ]; then
+    # We already re-executed as root but are somehow not — bail clearly.
+    die "Root privileges are required."
+  fi
+
+  local self; self="$(readlink -f "${BASH_SOURCE[0]}")"
+
+  # Codespaces, dev containers and CI usually have passwordless sudo: re-exec
+  # straight away so the whole run is root and no mid-install password prompt
+  # can appear (which is what happens with a bare "sudo" inside a function).
+  if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+    printf '  · elevating with sudo (passwordless)\n'
+    exec env ZK_INSTALL_ELEVATED=1 sudo -n -E bash "$self" "${ORIG_ARGS[@]}"
+  fi
+
+  # Interactive terminal: ask once, up front, and hand the whole run to sudo.
+  if command -v sudo >/dev/null 2>&1 && [ -t 0 ]; then
+    printf '  · root is required — sudo will now ask for your password\n'
+    exec env ZK_INSTALL_ELEVATED=1 sudo -E bash "$self" "${ORIG_ARGS[@]}"
+  fi
+
+  die "Root is required. Re-run with: sudo bash ${BASH_SOURCE[0]}"
+}
 
 detect_platform() {
   step "Detecting platform"
@@ -146,6 +181,8 @@ detect_platform() {
     SUDO=""
   elif command -v sudo >/dev/null 2>&1; then
     SUDO="sudo"
+  else
+    die "This installer needs root. Install sudo, or run it as root (su -)."
   fi
 
   # Containers: no systemd, no user management.
@@ -789,6 +826,13 @@ run_foreground() {
     info "Database ready"
   fi
 
+  if port_in_use; then
+    warn "Port ${PORT} is already in use by another process."
+    warn "Stop it, or re-run with a different port: --port <n>"
+    stop_embedded_db
+    die "Cannot start the panel on port ${PORT}."
+  fi
+
   info "Press Ctrl-C to stop."
   trap 'stop_embedded_db; exit 0' INT TERM
   # Run as the service account: it owns .env (mode 640) and the storage dir.
@@ -903,6 +947,7 @@ banner() {
 }
 
 main() {
+  elevate
   validate_port
   banner
   detect_platform
