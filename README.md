@@ -101,8 +101,18 @@ sudo bash install.sh
 It installs Node.js 22 and PostgreSQL when they're missing, creates a dedicated
 `zkstudio` service account, writes `.env` with a freshly generated `AUTH_SECRET`,
 applies migrations, seeds roles/settings/the first admin, builds the app and
-installs systemd services for the panel and the background worker. When it
-finishes it prints the URL and a generated admin password (shown once).
+installs systemd services for the panel and the background worker.
+
+When it finishes it prints the sign-in details **before** the server takes over the
+terminal (so Codespaces, Docker and foreground runs all show them), and writes the
+same details to `<install-dir>/CREDENTIALS.txt` — readable only by root and the
+service account. Pass `--admin-password 'YourPassword'` to choose your own instead
+of the generated `ZK…!9` password.
+
+> **It only prints the password on the first install.** If `.env` already exists it
+> is reused and no password is generated. To recover it: see `CREDENTIALS.txt`, read
+> `ADMIN_PASSWORD` from `.env`, or force a reset with
+> `npx tsx prisma/seed.ts --reset-admin` on the existing `ADMIN_PASSWORD`.
 
 ```bash
 sudo bash install.sh --port 8080                    # custom port
@@ -123,8 +133,10 @@ Useful flags: `--admin-email`, `--admin-password`, `--no-db` (use an external
   repo — no separate database server required.
 - Export `S3_BUCKET`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` before running to
   use S3/R2/B2 instead of local disk.
-- TCP ports only go up to **65535**, so a request for `77777` is clamped to `65535`
-  with a warning. Pick a normal port with `--port`.
+- TCP ports only go up to **65535**, so `77777` is not a valid port; it is replaced
+  with `8080` and a warning is printed. Pass `--port` to choose your own.
+- In GitHub Codespaces run `sudo bash install.sh --port 3000`, then open the **Ports**
+  tab and forward port 3000 — Codespaces only auto-forwards common ports.
 
 ---
 

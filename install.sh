@@ -62,9 +62,9 @@ validate_port() {
   esac
   if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
     local requested="$PORT"
-    PORT=65535
-    warn "Port ${requested} is outside the valid TCP range (1–65535); using ${PORT} instead."
-    warn "Pass --port <n> to choose a different port (e.g. --port 8080)."
+    PORT=8080
+    warn "Port ${requested} is not a valid TCP port (1–65535); using ${PORT} instead."
+    warn "Re-run with --port <n> to pick your own (e.g. --port 3000)."
   fi
 }
 
@@ -307,7 +307,7 @@ try_install_system_postgres() {
             $SUDO postgresql-setup --initdb >/dev/null 2>&1 || true ;;
     apk)    pkg_install postgresql postgresql-contrib >/dev/null 2>&1 || return 1 ;;
     pacman) pkg_install postgresql >/dev/null 2>&1 || return 1
-            $SUDO -u postgres initdb -D /var/lib/postgres/data >/dev/null 2>&1 || true ;;
+            run_as postgres initdb -D /var/lib/postgres/data >/dev/null 2>&1 || true ;;
     *)      return 1 ;;
   esac
   has psql
@@ -330,7 +330,7 @@ start_system_postgres() {
 
 provision_role() {
   DB_PASSWORD="${DB_PASSWORD:-$(openssl_rand 24)}"
-  $SUDO -u postgres psql -v ON_ERROR_STOP=0 -q >/dev/null 2>&1 <<SQL || true
+  run_as postgres psql -v ON_ERROR_STOP=0 -q >/dev/null 2>&1 <<SQL || true
     DO \$\$ BEGIN
       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${DB_USER}') THEN
         CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_PASSWORD}';
@@ -339,8 +339,8 @@ provision_role() {
       END IF;
     END \$\$;
 SQL
-  $SUDO -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" 2>/dev/null | grep -q 1 \
-    || $SUDO -u postgres createdb -O "${DB_USER}" "${DB_NAME}" 2>/dev/null || true
+  run_as postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" 2>/dev/null | grep -q 1 \
+    || run_as postgres createdb -O "${DB_USER}" "${DB_NAME}" 2>/dev/null || true
 }
 
 # On Debian/macOS the local server may use peer auth for postgres; try without a
@@ -407,12 +407,44 @@ copy_payload() {
   fi
 }
 
+# Runs "$@" as <user>. Works whether we are root (no sudo prefix) or relying on
+# sudo; `sudo -u` and `runuser -u` both need the switch flag, which is what broke
+# earlier when $SUDO expanded to nothing under a plain root shell.
+run_as() {
+  local user="$1"; shift
+  [ "$#" -gt 0 ] || return 0
+
+  if [ "$(id -u)" -eq 0 ]; then
+    if has runuser; then
+      runuser -u "$user" -- "$@"
+    elif has sudo; then
+      sudo -u "$user" -- "$@"
+    else
+      su -s /bin/sh "$user" -c "$(printf '%q ' "$@")"
+    fi
+    return
+  fi
+
+  if [ -n "$SUDO" ]; then
+    $SUDO -u "$user" -- "$@"
+    return
+  fi
+
+  # Cannot switch users — run as the current user if that is already the target.
+  if [ "$(id -un)" = "$user" ]; then "$@"; else return 1; fi
+}
+
+# True when we can switch to the application user.
+can_switch_user() {
+  [ "$OS" = linux ] || return 1
+  id "$APP_USER" >/dev/null 2>&1 || return 1
+  [ "$(id -u)" -eq 0 ] && return 0
+  [ -n "$SUDO" ]
+}
+
 as_user() {
-  # Run application commands as the unprivileged service account whenever we
-  # have the means to switch (root or passwordless-capable sudo).
-  if [ "$OS" = linux ] && { [ "$IS_ROOT" -eq 1 ] || [ -n "$SUDO" ]; } \
-     && id "$APP_USER" >/dev/null 2>&1; then
-    $SUDO -u "$APP_USER" -- env PATH="$PATH" HOME="/home/$APP_USER" "$@"
+  if can_switch_user; then
+    run_as "$APP_USER" env PATH="$PATH" HOME="/home/$APP_USER" "$@"
   else
     "$@"
   fi
@@ -435,13 +467,28 @@ install_deps() {
 
 build_app() {
   step "Building the panel (this takes a minute)"
-  if as_user env bash -c "cd '$INSTALL_DIR' && npm run build" >/tmp/zk-build.log 2>&1; then
+  # Log inside the install dir: /tmp may not be writable by the service user and
+  # a stale file there could make the redirect itself fail.
+  local log="${INSTALL_DIR}/.data/build.log"
+  $SUDO mkdir -p "${INSTALL_DIR}/.data"
+  $SUDO rm -f "$log" 2>/dev/null || true
+  [ "$OS" = linux ] && can_switch_user && $SUDO chown -R "$APP_USER":"$APP_USER" "${INSTALL_DIR}/.data" 2>/dev/null || true
+
+  local status=0
+  as_user env bash -c "cd '$INSTALL_DIR' && npm run build > '$log' 2>&1" || status=$?
+
+  if [ "$status" -eq 0 ]; then
     ok "Production build complete"
-  else
-    warn "Build failed — last 25 lines:"
-    tail -25 /tmp/zk-build.log >&2
-    die "Fix the build error above and re-run ./install.sh"
+    return
   fi
+
+  if [ -s "$log" ]; then
+    warn "Build failed — last 25 lines:"
+    tail -25 "$log" >&2
+  else
+    warn "The build did not produce any output (exit $status)."
+  fi
+  die "Fix the build error above and re-run ./install.sh"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -470,7 +517,9 @@ write_env() {
     return
   fi
 
-  [ -n "$ADMIN_EMAIL" ] || ADMIN_EMAIL="admin@${DOMAIN:-localhost}"
+  # "admin@localhost" is rejected by the app's email validator, so the
+  # domain-less default must be a real-looking address.
+  [ -n "$ADMIN_EMAIL" ] || ADMIN_EMAIL="admin@${DOMAIN:-vaultly.local}"
   local generated_pw=0
   if [ -z "$ADMIN_PASSWORD" ]; then
     ADMIN_PASSWORD="ZK$(openssl_rand 12)!9"
@@ -537,6 +586,25 @@ ENV
 
   ADMIN_PASSWORD_GENERATED="$generated_pw"
   ok "Configuration written to $env_file"
+
+  # Save a root-only copy of the credentials so they can always be recovered,
+  # even if the terminal output was lost or the installer ran non-interactively.
+  if [ "$generated_pw" = "1" ]; then
+    $SUDO tee "${INSTALL_DIR}/CREDENTIALS.txt" >/dev/null <<CREDS
+ZK STUDIO · Vaultly — first sign-in
+Generated $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  URL:      ${public_url}
+  Email:    ${ADMIN_EMAIL}
+  Password: ${ADMIN_PASSWORD}
+
+Change this password after signing in.
+Delete this file once you have saved the password elsewhere.
+CREDS
+    $SUDO chmod 600 "${INSTALL_DIR}/CREDENTIALS.txt"
+    [ "$OS" = linux ] && { [ "$IS_ROOT" -eq 1 ] || [ -n "$SUDO" ]; } && \
+      $SUDO chown "$APP_USER":"$APP_USER" "${INSTALL_DIR}/CREDENTIALS.txt" 2>/dev/null || true
+  fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -705,6 +773,7 @@ install_firewall_rules() {
 }
 
 run_foreground() {
+  print_credentials
   step "Starting the panel in the foreground on port $PORT"
 
   local db_pid=""
@@ -769,29 +838,40 @@ do_uninstall() {
 # ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
-print_summary() {
-  local host_display
-  if [ -n "$DOMAIN" ]; then host_display="https://${DOMAIN#http*://}"
+public_url_display() {
+  if [ -n "$DOMAIN" ]; then
+    printf 'https://%s' "${DOMAIN#http*://}"
   else
-    host_display="http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo localhost):${PORT}"
+    local ip
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    [ -n "$ip" ] || ip="localhost"
+    printf 'http://%s:%s' "$ip" "$PORT"
   fi
+}
 
+# Printed before the foreground server starts, because once `next start` runs it
+# owns the terminal. Codespaces, Docker and macOS all take this path.
+print_credentials() {
   printf '\n%s╭──────────────────────────────────────────────────────────────╮%s\n' "$CYAN" "$RESET"
-  printf '%s│%s  %sZK STUDIO · Vaultly is installed and running%s             %s│%s\n' "$CYAN" "$RESET" "$BOLD" "$RESET" "$CYAN" "$RESET"
+  printf '%s│%s  %sZK STUDIO · Vaultly is installed%s                        %s│%s\n' "$CYAN" "$RESET" "$BOLD" "$RESET" "$CYAN" "$RESET"
   printf '%s╰──────────────────────────────────────────────────────────────╯%s\n\n' "$CYAN" "$RESET"
 
   printf '  %sPanel%s            http://localhost:%s\n' "$BOLD" "$RESET" "$PORT"
-  printf '  %sNetwork%s          %s\n' "$BOLD" "$RESET" "$host_display"
+  printf '  %sNetwork%s          %s\n' "$BOLD" "$RESET" "$(public_url_display)"
   printf '  %sAdmin email%s      %s\n' "$BOLD" "$RESET" "$ADMIN_EMAIL"
   if [ "${ADMIN_PASSWORD_GENERATED:-0}" = "1" ]; then
     printf '  %sAdmin password%s   %s%s%s\n' "$BOLD" "$RESET" "$YELLOW" "$ADMIN_PASSWORD" "$RESET"
-    printf '  %s%s Save this password — it is only shown once.%s\n' "$DIM" "" "$RESET"
+    printf '  %s%s Also saved to %s/CREDENTIALS.txt (delete it after saving).%s\n' "$DIM" "" "$INSTALL_DIR" "$RESET"
   else
     printf '  %sAdmin password%s   (the one you supplied)\n' "$BOLD" "$RESET"
   fi
   printf '  %sInstall dir%s      %s\n' "$BOLD" "$RESET" "$INSTALL_DIR"
   printf '  %sConfig%s           %s/.env\n' "$BOLD" "$RESET" "$INSTALL_DIR"
   printf '  %sStorage%s          %s/storage/uploads\n\n' "$BOLD" "$RESET" "$INSTALL_DIR"
+}
+
+print_summary() {
+  print_credentials
 
   if [ -n "$INIT" ]; then
     printf '  %sServices%s\n' "$BOLD" "$RESET"
@@ -802,8 +882,8 @@ print_summary() {
   printf '  %sNext steps%s\n' "$BOLD" "$RESET"
   printf '    1. Open the panel and change the admin password.\n'
   printf '    2. Admin → Settings → Email: configure SMTP for password resets.\n'
-  if [ "$PUBLIC_S3" = "0" ] && [ "$USE_LOCAL_DB" -eq 1 ]; then
-    printf '    3. For scale, switch to S3/R2 (see .env.example).\n'
+  if [ "$DB_MODE" = "embedded" ]; then
+    printf '    3. Single-server install: switch to S3/R2 when you outgrow this box.\n'
   fi
   [ -n "$DOMAIN" ] || printf '    3. Expose it publicly behind Caddy/nginx for HTTPS.\n'
   printf '\n  %sRe-run this installer any time to update the code.%s\n\n' "$DIM" "$RESET"
